@@ -40,7 +40,7 @@ export default function Home() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim()) return;
 
     const newMessage: Message = {
@@ -54,16 +54,34 @@ export default function Home() {
     setInput("");
     setIsTyping(true);
 
-    setTimeout(() => {
+    try {
+      const response = await fetch("http://localhost:8000/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: input }),
+      });
+      
+      const data = await response.json();
+
       const botResponse: Message = {
         id: (Date.now() + 1).toString(),
         sender: "bot",
-        text: "I've analyzed your message. Based on the PDF content, here's what I found relevant to your query.",
+        text: data.answer || "Sorry, I couldn't process that.",
         timestamp: new Date(),
       };
+      
       setMessages((prev) => [...prev, botResponse]);
+    } catch (error) {
+       const errorResponse: Message = {
+        id: (Date.now() + 1).toString(),
+        sender: "bot",
+        text: "Error communicating with the TalkToPdf backend.",
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorResponse]);
+    } finally {
       setIsTyping(false);
-    }, 1200);
+    }
   };
 
   return (
