@@ -5,12 +5,13 @@ const { QdrantClient } = require("@qdrant/js-client-rest");
 const { GoogleGenerativeAIEmbeddings } = require("@langchain/google-genai");
 
 const client = new QdrantClient({
-  url: process.env.QDRANT_URL
+  url: process.env.QDRANT_URL,
+  checkCompatibility: false
 });
 
 const embeddings = new GoogleGenerativeAIEmbeddings({
   apiKey: process.env.GOOGLE_API_KEY,
-  modelName: "text-embedding-004"
+  model: "models/gemini-embedding-001"
 });
 
 async function getVectorStore() {

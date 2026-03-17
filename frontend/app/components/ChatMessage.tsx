@@ -1,4 +1,6 @@
-import React from "react";
+"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
 
 interface ChatMessageProps {
   sender: "user" | "bot";
@@ -7,6 +9,24 @@ interface ChatMessageProps {
 }
 
 export default function ChatMessage({ sender, text, timestamp }: ChatMessageProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const timeLabel = useMemo(() => {
+    // Avoid locale-dependent formatting differences between server and client.
+    const hours24 = timestamp.getHours();
+    const hours12 = ((hours24 + 11) % 12) + 1;
+    const minutes = timestamp.getMinutes();
+    const ampm = hours24 >= 12 ? "PM" : "AM";
+    return `${String(hours12).padStart(2, "0")}:${String(minutes).padStart(
+      2,
+      "0"
+    )} ${ampm}`;
+  }, [timestamp]);
+
   return (
     <div
       className={`flex gap-3 ${
@@ -23,10 +43,7 @@ export default function ChatMessage({ sender, text, timestamp }: ChatMessageProp
         <p className="text-sm">{text}</p>
       </div>
       <span className="text-xs text-gray-500 self-end">
-        {timestamp.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
+        {mounted ? timeLabel : ""}
       </span>
     </div>
   );

@@ -19,7 +19,7 @@ const prompt = ChatPromptTemplate.fromTemplate(systemPrompt);
 
 // Initialize the Gemini LLM
 const llm = new ChatGoogleGenerativeAI({
-    modelName: "gemini-1.5-flash",
+    modelName: "models/gemini-flash-latest",
     apiKey: process.env.GOOGLE_API_KEY,
     temperature: 0.3,
 });

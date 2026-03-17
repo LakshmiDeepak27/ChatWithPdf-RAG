@@ -3,6 +3,9 @@
 import React, { useRef, useState } from "react";
 import { Upload, Loader2, Check, Sparkles } from "lucide-react";
 
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000";
+
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
 }
@@ -14,19 +17,28 @@ export default function FileUpload({ onFileSelect }: FileUploadProps) {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const uploadPdf = async (file: File) => {
+    const formData = new FormData();
+    formData.append("pdf", file);
+
+    const res = await fetch(`${API_BASE_URL}/upload/pdf`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Upload failed (${res.status}): ${text}`);
+    }
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && file.type === "application/pdf") {
       setPdfFile(file);
       console.log(file);
-      const formData=new FormData();
-      formData.append('pdf' , file);
-      
-      await fetch('http://localhost:5000/upload/pdf' , {
-        method: 'POST',
-        body:formData,
-      });
-      console.log('File uploaded');
+
+      await uploadPdf(file);
       simulateUpload();
       onFileSelect(file);
     }
@@ -51,7 +63,10 @@ export default function FileUpload({ onFileSelect }: FileUploadProps) {
     const file = e.dataTransfer.files?.[0];
     if (file && file.type === "application/pdf") {
       setPdfFile(file);
-      
+
+      uploadPdf(file).catch((err) => {
+        console.error(err);
+      });
       simulateUpload();
       onFileSelect(file);
     }
