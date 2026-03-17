@@ -1,15 +1,11 @@
 const { Worker } = require('bullmq');
-const { RecursiveCharacterTextSplitter } = require("langchain/text_splitter");
-const { Document } = require("langchain/document");
+const { RecursiveCharacterTextSplitter } = require("@langchain/textsplitters");
+const { Document } = require("@langchain/core/documents");
 const { UPLOAD_QUEUE_NAME } = require('../queues/uploadQueue');
 const { redisConfig } = require('../config/redis');
 const { extractTextFromPDF } = require('../utils/pdfLoader');
-const { Chroma } = require("@langchain/community/vectorstores/chroma");
-const { embeddings } = require('../langchain/embeddings');
 require('dotenv').config();
 
-const chromaPath = process.env.CHROMA_DB_PATH || "./chroma_db";
-const collectionName = "talktopdf_docs";
 
 async function processJob(job) {
     console.log(`Processing job ${job.id} for file ${job.data.filename}`);
@@ -46,12 +42,10 @@ async function processJob(job) {
             });
         });
 
-        // 4. Generate & Store Embeddings in ChromaDB
-        console.log('Storing embeddings inside ChromaDB...');
-        const vectorStore = new Chroma(embeddings, {
-            collectionName: collectionName,
-            url: "http://localhost:8000"
-        });
+        // 4. Generate & Store Embeddings in Qdrant
+        console.log('Storing embeddings inside Qdrant...');
+        const { getVectorStore } = require('../langchain/vectorStore');
+        const vectorStore = await getVectorStore();
         
         await vectorStore.addDocuments(documents);
         

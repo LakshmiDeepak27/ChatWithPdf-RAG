@@ -22,7 +22,7 @@ export default function FileUpload({ onFileSelect }: FileUploadProps) {
       const formData=new FormData();
       formData.append('pdf' , file);
       
-      await fetch('http://localhost:8000/upload/pdf' , {
+      await fetch('http://localhost:5000/upload/pdf' , {
         method: 'POST',
         body:formData,
       });

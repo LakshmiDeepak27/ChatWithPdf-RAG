@@ -1,7 +1,7 @@
 const { ChatGoogleGenerativeAI } = require("@langchain/google-genai");
-const { createRetrievalChain } = require("langchain/chains/retrieval");
-const { createStuffDocumentsChain } = require("langchain/chains/combine_documents");
 const { ChatPromptTemplate } = require("@langchain/core/prompts");
+const { StringOutputParser } = require("@langchain/core/output_parsers");
+const { RunnableSequence, RunnablePassthrough } = require("@langchain/core/runnables");
 const { getVectorStore } = require("./vectorStore");
 require('dotenv').config();
 
@@ -13,20 +13,16 @@ Try to keep the answer concise and relevant to the provided document context.
 
 Context: {context}
 
-Question: {input}`;
+Question: {question}`;
 
-const prompt = ChatPromptTemplate.fromMessages([
-    ["system", systemPrompt],
-    ["human", "{input}"]
-]);
+const prompt = ChatPromptTemplate.fromTemplate(systemPrompt);
 
 // Initialize the Gemini LLM
 const llm = new ChatGoogleGenerativeAI({
     modelName: "gemini-1.5-flash",
-    apiKey: process.env.GEMINI_API_KEY,
+    apiKey: process.env.GOOGLE_API_KEY,
     temperature: 0.3,
 });
-
 
 async function createRAGChain() {
     // 1. Get the Vector Store
@@ -34,30 +30,30 @@ async function createRAGChain() {
     
     // 2. Create the Retriever from the Vector Store
     const retriever = vectorStore.asRetriever();
+
+    // 3. Format documents into a single string
+    const formatDocs = (docs) => docs.map((doc) => doc.pageContent).join("\\n\\n");
     
-    // 3. Create the document combining chain
-    const combineDocsChain = await createStuffDocumentsChain({
-        llm: llm,
-        prompt: prompt,
-    });
+    // 4. Create the LangChain Expression Language (LCEL) chain
+    const ragChain = RunnableSequence.from([
+        {
+            context: retriever.pipe(formatDocs),
+            question: new RunnablePassthrough()
+        },
+        prompt,
+        llm,
+        new StringOutputParser()
+    ]);
     
-    // 4. Create the final retrieval chain
-    const retrievalChain = await createRetrievalChain({
-        retriever: retriever,
-        combineDocsChain: combineDocsChain,
-    });
-    
-    return retrievalChain;
+    return ragChain;
 }
 
 async function askQuestion(question) {
     try {
         const chain = await createRAGChain();
-        const response = await chain.invoke({
-            input: question,
-        });
+        const response = await chain.invoke(question);
         
-        return response.answer;
+        return response; // StringOutputParser returns directly the string
     } catch (error) {
         console.error("Error generating answer in ragChain:", error);
         throw error;

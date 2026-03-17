@@ -1,41 +1,41 @@
-const { Chroma } = require("@langchain/community/vectorstores/chroma");
-const { embeddings } = require("./embeddings");
-require('dotenv').config();
+require("dotenv").config();
 
-const chromaPath = process.env.CHROMA_DB_PATH || "./chroma_db";
-const collectionName = "talktopdf_docs";
+const { QdrantVectorStore } = require("@langchain/qdrant");
+const { QdrantClient } = require("@qdrant/js-client-rest");
+const { GoogleGenerativeAIEmbeddings } = require("@langchain/google-genai");
+
+const client = new QdrantClient({
+  url: process.env.QDRANT_URL
+});
+
+const embeddings = new GoogleGenerativeAIEmbeddings({
+  apiKey: process.env.GOOGLE_API_KEY,
+  modelName: "text-embedding-004"
+});
 
 async function getVectorStore() {
-    try {
-        const vectorStore = await Chroma.fromExistingCollection(embeddings, {
-            collectionName: collectionName,
-            url: "http://localhost:8000" // Chroma's local URL. Change this if using a different Chroma setup
-        });
-        return vectorStore;
-    } catch (error) {
-        // Fallback: If the collection doesn't exist, create an empty one.
-        console.log("Collection doesn't exist yet, creating a new Chroma vector store instance.");
-        
-        // This won't actually "create" it in chroma until we add documents, but gives an interface.
-        const vectorStore = new Chroma(embeddings, {
-            collectionName: collectionName,
-        });
-
-        return vectorStore;
-    }
-}
-
-async function addDocumentsToVectorStore(docs) {
-    const vectorStore = new Chroma(embeddings, {
-        collectionName: collectionName,
-    });
-    
-    await vectorStore.addDocuments(docs);
+  try {
+    const vectorStore = await QdrantVectorStore.fromExistingCollection(
+      embeddings,
+      {
+        client,
+        collectionName: process.env.QDRANT_COLLECTION
+      }
+    );
     return vectorStore;
+  } catch (error) {
+    console.log("Collection not found or error occurred, creating new collection in Qdrant...");
+    // Initialize with an empty document to ensure collection creation
+    const vectorStore = await QdrantVectorStore.fromDocuments(
+      [],
+      embeddings,
+      {
+        client,
+        collectionName: process.env.QDRANT_COLLECTION
+      }
+    );
+    return vectorStore;
+  }
 }
 
-module.exports = {
-    getVectorStore,
-    addDocumentsToVectorStore,
-    collectionName
-};
+module.exports = { getVectorStore };

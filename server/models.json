@@ -1,0 +1,30 @@
+[
+  {
+    "name": "models/gemini-embedding-001",
+    "version": "001",
+    "displayName": "Gemini Embedding 001",
+    "description": "Obtain a distributed representation of a text.",
+    "inputTokenLimit": 2048,
+    "outputTokenLimit": 1,
+    "supportedGenerationMethods": [
+      "embedContent",
+      "countTextTokens",
+      "countTokens",
+      "asyncBatchEmbedContent"
+    ]
+  },
+  {
+    "name": "models/gemini-embedding-2-preview",
+    "version": "2",
+    "displayName": "Gemini Embedding 2 Preview",
+    "description": "Obtain a distributed representation of multimodal content.",
+    "inputTokenLimit": 8192,
+    "outputTokenLimit": 1,
+    "supportedGenerationMethods": [
+      "embedContent",
+      "countTextTokens",
+      "countTokens",
+      "asyncBatchEmbedContent"
+    ]
+  }
+]
