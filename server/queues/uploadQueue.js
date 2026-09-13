@@ -1,10 +1,11 @@
 const { Queue } = require('bullmq');
-const { redisConnection } = require('../config/redis');
+const { createRedisClient } = require('../config/redis');
 
 const UPLOAD_QUEUE_NAME = 'upload-file-queue';
 
+// Dedicated Redis connection for the Queue producer
 const uploadQueue = new Queue(UPLOAD_QUEUE_NAME, {
-  connection: redisConnection,
+  connection: createRedisClient('queue'),
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -13,11 +14,11 @@ const uploadQueue = new Queue(UPLOAD_QUEUE_NAME, {
     },
     removeOnComplete: {
       count: 200,
-      age: 24 * 3600, // 24 hours
+      age: 24 * 3600,
     },
     removeOnFail: {
       count: 500,
-      age: 7 * 24 * 3600, // 7 days
+      age: 7 * 24 * 3600,
     },
   },
 });

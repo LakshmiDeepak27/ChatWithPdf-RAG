@@ -3,13 +3,11 @@ const Redis = require('ioredis');
 function normalizeRedisUrl(rawUrl) {
   if (!rawUrl) return null;
   let url = rawUrl.trim();
-  // Strip any accidental wrapping quotes
   url = url.replace(/^['"]|['"]$/g, '');
 
   if (url.startsWith('//')) {
     url = 'rediss:' + url;
   } else if (!url.startsWith('redis://') && !url.startsWith('rediss://')) {
-    // If it's upstash or cloud, default to secure rediss://
     const protocol = url.includes('upstash.io') ? 'rediss://' : 'redis://';
     url = `${protocol}${url}`;
   }
@@ -53,26 +51,37 @@ function getRedisConfig() {
   };
 }
 
-const config = getRedisConfig();
-const redisConnection = config.url
-  ? new Redis(config.url, config.options)
-  : new Redis(config.options);
+/**
+ * Creates a brand new, dedicated Redis connection.
+ * Essential for BullMQ Queue and Worker to prevent command blocking.
+ */
+function createRedisClient(name = 'default') {
+  const cfg = getRedisConfig();
+  const client = cfg.url
+    ? new Redis(cfg.url, cfg.options)
+    : new Redis(cfg.options);
+
+  client.on('error', (err) => {
+    console.error(`[Redis:${name}] Connection error:`, err.message);
+  });
+
+  return client;
+}
+
+// Dedicated connection for Express key/value operations (status, cache)
+const redisConnection = createRedisClient('express');
 
 redisConnection.on('connect', () => {
-  console.log('[Redis] Connected to Redis/Valkey successfully.');
+  console.log('[Redis:express] Connected to Redis/Valkey successfully.');
 });
 
 redisConnection.on('ready', () => {
-  console.log('[Redis] Redis connection is ready to accept commands.');
-});
-
-redisConnection.on('error', (err) => {
-  console.error('[Redis] Connection error:', err.message);
+  console.log('[Redis:express] Ready to accept commands.');
 });
 
 module.exports = {
   redisConnection,
-  redisConfig: config.url ? config.url : config.options,
+  createRedisClient,
   getRedisConfig,
   normalizeRedisUrl,
 };

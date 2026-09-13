@@ -5,7 +5,7 @@ const { Worker } = require('bullmq');
 const { RecursiveCharacterTextSplitter } = require('@langchain/textsplitters');
 const { Document } = require('@langchain/core/documents');
 const { UPLOAD_QUEUE_NAME } = require('../queues/uploadQueue');
-const { redisConnection } = require('../config/redis');
+const { redisConnection, createRedisClient } = require('../config/redis');
 const { extractTextFromPDF } = require('../utils/pdfLoader');
 const { getVectorStore } = require('../langchain/vectorStore');
 
@@ -170,7 +170,7 @@ async function processJob(job) {
 console.log(`[Worker] Initializing BullMQ PDF Worker on queue: "${UPLOAD_QUEUE_NAME}"...`);
 
 const pdfWorker = new Worker(UPLOAD_QUEUE_NAME, processJob, {
-  connection: redisConnection,
+  connection: createRedisClient('worker'),
   concurrency: Number(process.env.WORKER_CONCURRENCY) || 2,
 });
 
