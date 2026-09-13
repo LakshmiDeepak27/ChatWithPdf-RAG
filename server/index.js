@@ -14,29 +14,54 @@ const app = express();
 // Trust proxy if running behind reverse proxy (Render, Railway, Nginx, Fly.io)
 app.set('trust proxy', 1);
 
-// 1. CORS Configuration
-const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-const allowedOrigins = [
-  frontendUrl,
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-].filter(Boolean);
+// 1. Path Normalization (resolves accidental double slashes from client URLs)
+app.use((req, res, next) => {
+  if (req.url && req.url.startsWith('//')) {
+    req.url = req.url.replace(/^\/+/, '/');
+  }
+  next();
+});
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+// 2. CORS Configuration
+const cleanFrontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+
+    const cleanOrigin = origin.replace(/\/+$/, '');
+
+    // Allow explicitly configured frontend URL
+    if (cleanFrontendUrl && cleanOrigin === cleanFrontendUrl) {
+      return callback(null, true);
+    }
+
+    // Allow local development
+    if (cleanOrigin === 'http://localhost:3000' || cleanOrigin === 'http://127.0.0.1:3000') {
+      return callback(null, true);
+    }
+
+    // Allow all Vercel deployment domains (*.vercel.app)
+    try {
+      const hostname = new URL(origin).hostname;
+      if (hostname.endsWith('.vercel.app')) {
         return callback(null, true);
       }
-      return callback(new Error(`CORS policy does not allow access from origin ${origin}`), false);
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  })
-);
+    } catch (_) {}
+
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS policy does not allow access from origin ${origin}`), false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // 2. Body Parser & Rate Limiter
 app.use(express.json({ limit: '2mb' }));

@@ -4,8 +4,9 @@ import React, { useRef, useState } from "react";
 import { Upload, Loader2, Check, Sparkles, AlertCircle, ShieldAlert } from "lucide-react";
 import { useAuth } from "@clerk/nextjs";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000";
+const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000"
+).replace(/\/+$/, "");
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;

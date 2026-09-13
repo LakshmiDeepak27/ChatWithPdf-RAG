@@ -14,8 +14,9 @@ import {
 import FileUpload from "./components/FileUpload";
 import ChatMessage from "./components/ChatMessage";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000";
+const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000"
+).replace(/\/+$/, "");
 
 interface Message {
   id: string;
