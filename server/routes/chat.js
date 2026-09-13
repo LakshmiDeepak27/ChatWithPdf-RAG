@@ -84,14 +84,21 @@ router.post('/', chatRateLimiter, requireAuth, async (req, res) => {
       documentId,
     });
   } catch (error) {
-    console.error('[Chat] Error processing question:', error.message);
+    const errorDetails =
+      error?.data?.status?.error ||
+      error?.data?.error ||
+      (typeof error?.data === 'string' ? error.data : null) ||
+      error?.message ||
+      'Failed to generate answer from document context. Please try again.';
+
+    console.error('[Chat] Error processing question:', error.message, error?.data || '');
 
     if (error.message && error.message.includes('rate limit')) {
-      return res.status(429).json({ error: error.message });
+      return res.status(429).json({ error: 'AI service is busy. Please wait a moment and try again.' });
     }
 
     return res.status(500).json({
-      error: error.message || 'Failed to generate answer from document context. Please try again.',
+      error: errorDetails,
     });
   }
 });
