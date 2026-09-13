@@ -45,7 +45,7 @@ export default function FileUpload({
   const pollDocumentStatus = (documentId: string, file: File) => {
     clearPolling();
     let attempts = 0;
-    const maxAttempts = 90; // 90 * 1.5s = 135s timeout
+    const maxAttempts = 90;
 
     pollIntervalRef.current = setInterval(async () => {
       attempts += 1;
@@ -66,7 +66,6 @@ export default function FileUpload({
         });
 
         if (!res.ok) {
-          // If transient 5xx, don't abort immediately; allow next poll
           if (res.status >= 500 && attempts < maxAttempts - 5) {
             return;
           }
@@ -149,7 +148,6 @@ export default function FileUpload({
       setStatusMessage("Document received. Processing embeddings...");
       onStatusChange?.("processing");
 
-      // Start backend status polling
       pollDocumentStatus(result.documentId, file);
     } catch (err: unknown) {
       clearTimeout(timeoutId);
@@ -227,10 +225,10 @@ export default function FileUpload({
           }
           fileInputRef.current?.click();
         }}
-        className={`flex flex-col justify-center items-center border-2 border-dashed rounded-xl cursor-pointer transition p-8 ${
+        className={`flex flex-col justify-center items-center border-2 border-dashed rounded-2xl cursor-pointer transition-all p-8 ${
           isDragging
-            ? "border-indigo-400 bg-gray-700"
-            : "border-gray-600 hover:border-indigo-400 bg-gray-800/60"
+            ? "border-accent-primary bg-surface shadow-md scale-[1.01]"
+            : "border-border-theme hover:border-accent-primary/70 bg-surface/50 hover:bg-surface"
         }`}
       >
         <input
@@ -240,19 +238,21 @@ export default function FileUpload({
           onChange={handleFileChange}
           className="hidden"
         />
-        <Upload className="w-10 h-10 text-indigo-400 mb-3" />
-        <p className="font-medium text-center">
-          {isDragging ? "Drop your PDF here" : "Drop PDF or click to upload"}
+        <div className="p-3.5 rounded-2xl bg-surface border border-border-theme text-accent-primary mb-3 shadow-xs">
+          <Upload className="w-7 h-7" />
+        </div>
+        <p className="font-semibold text-sm text-text-primary text-center">
+          {isDragging ? "Drop your PDF here" : "Drop PDF or click to browse"}
         </p>
-        <p className="text-xs text-gray-500 mt-1">Maximum file size: 50MB (PDF only)</p>
+        <p className="text-xs text-text-muted mt-1">PDF documents up to 50MB</p>
       </div>
 
       {/* Error Message */}
       {errorMessage && (
-        <div className="mt-4 p-3 bg-red-950/60 border border-red-800/80 rounded-xl flex items-start justify-between gap-2 text-red-300 text-xs">
+        <div className="mt-4 p-3.5 bg-[#E47777]/10 border border-[#E47777]/30 rounded-xl flex items-start justify-between gap-2 text-[#E47777] text-xs">
           <div className="flex items-start gap-2 flex-1">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
-            <p className="flex-1">{errorMessage}</p>
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <p className="flex-1 font-medium">{errorMessage}</p>
           </div>
           {pdfFile && currentStatus === "failed" && (
             <button
@@ -260,7 +260,7 @@ export default function FileUpload({
                 e.stopPropagation();
                 if (pdfFile) uploadPdf(pdfFile);
               }}
-              className="flex items-center gap-1 px-2.5 py-1 bg-red-800/80 hover:bg-red-700 text-white rounded-md text-xs font-medium transition"
+              className="flex items-center gap-1 px-2.5 py-1 bg-[#E47777]/20 hover:bg-[#E47777]/30 text-[#E47777] rounded-lg text-xs font-semibold transition cursor-pointer"
             >
               <RotateCw className="w-3 h-3" />
               Retry
@@ -271,52 +271,56 @@ export default function FileUpload({
 
       {/* Unauthenticated Hint */}
       {!isSignedIn && (
-        <div className="mt-4 p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl flex items-center gap-2 text-amber-300 text-xs">
-          <ShieldAlert className="w-4 h-4 shrink-0 text-amber-400" />
-          <p>Authentication required. Please sign in to securely upload and query documents.</p>
+        <div className="mt-4 p-3 bg-[#E5B95C]/10 border border-[#E5B95C]/30 rounded-xl flex items-center gap-2.5 text-[#E5B95C] text-xs">
+          <ShieldAlert className="w-4 h-4 shrink-0" />
+          <p className="font-medium">Authentication required. Please sign in to securely analyze documents.</p>
         </div>
       )}
 
       {/* File Status & Progress */}
       {pdfFile && (
-        <div className="mt-6 p-4 border border-gray-700 rounded-xl bg-gray-750/90 shadow-sm">
+        <div className="mt-5 p-4 border border-border-theme rounded-2xl bg-surface shadow-xs">
           <div className="flex items-center justify-between mb-2">
             <div className="max-w-[80%]">
-              <p className="font-semibold text-sm truncate">{pdfFile.name}</p>
-              <p className="text-xs text-gray-400">{formatFileSize(pdfFile.size)}</p>
+              <p className="font-semibold text-xs text-text-primary truncate">{pdfFile.name}</p>
+              <p className="text-[11px] text-text-muted mt-0.5">{formatFileSize(pdfFile.size)}</p>
             </div>
             {currentStatus === "ready" ? (
-              <Check className="w-5 h-5 text-green-400" />
+              <div className="p-1 rounded-full bg-[#79C98A]/20 text-[#79C98A]">
+                <Check className="w-4 h-4" />
+              </div>
             ) : currentStatus === "failed" ? (
-              <AlertCircle className="w-5 h-5 text-red-400" />
+              <div className="p-1 rounded-full bg-[#E47777]/20 text-[#E47777]">
+                <AlertCircle className="w-4 h-4" />
+              </div>
             ) : (
-              <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+              <Loader2 className="w-4 h-4 animate-spin text-accent-primary" />
             )}
           </div>
 
-          <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+          <div className="w-full h-1.5 bg-bg-primary rounded-full overflow-hidden">
             <div
               className={`h-full transition-all duration-300 ${
                 currentStatus === "failed"
-                  ? "bg-red-500"
+                  ? "bg-[#E47777]"
                   : currentStatus === "ready"
-                  ? "bg-green-500"
-                  : "bg-indigo-400"
+                  ? "bg-accent-primary"
+                  : "bg-accent-primary"
               }`}
               style={{ width: `${uploadProgress}%` }}
             ></div>
           </div>
 
           {currentStatus === "ready" && (
-            <p className="text-xs text-green-400 mt-2 flex items-center gap-1">
+            <p className="text-xs text-accent-primary font-medium mt-2 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5" />
               {statusMessage || "Ready to answer your questions!"}
             </p>
           )}
 
           {(currentStatus === "uploading" || currentStatus === "processing") && (
-            <p className="text-xs text-indigo-300 mt-2 flex items-center gap-1.5">
-              <Loader2 className="w-3 h-3 animate-spin" />
+            <p className="text-xs text-text-secondary mt-2 flex items-center gap-1.5">
+              <Loader2 className="w-3 h-3 animate-spin text-accent-primary" />
               {statusMessage}
             </p>
           )}

@@ -15,6 +15,8 @@ import {
 import FileUpload from "./components/FileUpload";
 import ChatMessage from "./components/ChatMessage";
 import HistoryList, { ChatSession, SerializedMessage } from "./components/HistoryList";
+import LucidLogo from "./components/LucidLogo";
+import ThemeToggle from "./components/ThemeToggle";
 
 const API_BASE_URL = (
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000"
@@ -23,7 +25,7 @@ const API_BASE_URL = (
 const DEFAULT_WELCOME_MESSAGE = {
   id: "1",
   sender: "bot" as const,
-  text: "Welcome to TalkToPDF! Sign in and upload your PDF to start chatting with your document using AI.",
+  text: "Welcome to LucidChat! Sign in and upload your PDF to analyze, summarize, and chat with your document using AI.",
   timestamp: new Date(),
 };
 
@@ -48,7 +50,7 @@ export default function Home() {
   const activeDocIdRef = useRef<string | null>(null);
   activeDocIdRef.current = documentId;
 
-  const storageKey = `talktopdf_sessions_${user?.id || "guest"}`;
+  const storageKey = `lucidchat_sessions_${user?.id || "guest"}`;
 
   // Load saved sessions from localStorage on mount and when user auth changes
   useEffect(() => {
@@ -107,7 +109,7 @@ export default function Home() {
     const readyMsg = {
       id: Date.now().toString(),
       sender: "bot" as const,
-      text: `"${file.name}" has been processed and indexed! You can now ask questions about its content.`,
+      text: `"${file.name}" has been processed and indexed! You can now ask any question about its content.`,
       timestamp: new Date(),
     };
 
@@ -244,7 +246,7 @@ export default function Home() {
       const errorMsg =
         err instanceof Error
           ? err.message
-          : "Failed to communicate with the TalkToPdf backend.";
+          : "Failed to communicate with the LucidChat backend.";
       const errorResponse = {
         id: (Date.now() + 1).toString(),
         sender: "bot" as const,
@@ -257,7 +259,6 @@ export default function Home() {
     }
   };
 
-  // Switch to a previous document chat session from History
   const handleSelectSession = (session: ChatSession) => {
     setDocumentId(session.documentId);
     setPdfFile({ name: session.filename, size: session.fileSize || 0 } as File);
@@ -277,7 +278,6 @@ export default function Home() {
     setActiveTab("document");
   };
 
-  // Delete a single session from History
   const handleDeleteSession = (targetDocId: string) => {
     const nextSessions = sessions.filter((s) => s.documentId !== targetDocId);
     saveSessions(nextSessions);
@@ -287,7 +287,6 @@ export default function Home() {
     }
   };
 
-  // Clear all history
   const handleClearHistory = () => {
     if (confirm("Are you sure you want to clear all saved document chat history?")) {
       saveSessions([]);
@@ -295,7 +294,6 @@ export default function Home() {
     }
   };
 
-  // Start fresh upload session
   const handleNewUpload = () => {
     setDocumentId(null);
     setPdfFile(null);
@@ -305,33 +303,22 @@ export default function Home() {
   };
 
   return (
-    <div className="h-screen w-screen flex font-sans bg-gray-900 text-gray-100 overflow-hidden">
-      {/* Left Panel: Upload, Doc Info & History */}
-      <div className="w-[40%] flex flex-col p-8 border-r border-gray-800 bg-gray-850 overflow-y-auto">
-        {/* Header */}
+    <div className="h-screen w-screen flex font-sans bg-bg-primary text-text-primary overflow-hidden transition-colors duration-200">
+      {/* Left Sidebar: Logo, Navigation & Document Controls */}
+      <div className="w-[38%] min-w-[340px] max-w-[460px] flex flex-col p-6 border-r border-border-theme bg-bg-secondary overflow-y-auto">
+        {/* Brand Header */}
         <div className="mb-6">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-indigo-600/20 rounded-lg text-indigo-400">
-              <FileText className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-white tracking-tight">TalkToPDF</h1>
-              <p className="text-xs text-indigo-400 font-medium">Production RAG Assistant</p>
-            </div>
-          </div>
-          <p className="text-gray-400 text-xs mt-1">
-            Secure multi-tenant document analysis with Gemini & Qdrant vector retrieval.
-          </p>
+          <LucidLogo size="md" showSubtitle={true} />
         </div>
 
-        {/* Tab Switcher: Upload & Doc vs History */}
-        <div className="flex bg-gray-800/80 p-1 rounded-xl mb-6 border border-gray-700/60 shrink-0">
+        {/* Tab Switcher */}
+        <div className="flex bg-surface p-1 rounded-xl mb-6 border border-border-theme shrink-0">
           <button
             onClick={() => setActiveTab("document")}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition ${
+            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
               activeTab === "document"
-                ? "bg-indigo-600 text-white shadow-sm"
-                : "text-gray-400 hover:text-white"
+                ? "bg-accent-primary text-black shadow-xs"
+                : "text-text-muted hover:text-text-primary"
             }`}
           >
             <FileText className="w-3.5 h-3.5" />
@@ -339,10 +326,10 @@ export default function Home() {
           </button>
           <button
             onClick={() => setActiveTab("history")}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition ${
+            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
               activeTab === "history"
-                ? "bg-indigo-600 text-white shadow-sm"
-                : "text-gray-400 hover:text-white"
+                ? "bg-accent-primary text-black shadow-xs"
+                : "text-text-muted hover:text-text-primary"
             }`}
           >
             <Clock className="w-3.5 h-3.5" />
@@ -350,7 +337,7 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Tab 1: Upload & Document Information */}
+        {/* Tab Content */}
         {activeTab === "document" ? (
           <div>
             <FileUpload
@@ -359,24 +346,23 @@ export default function Home() {
               onStatusChange={(status) => setDocumentStatus(status)}
             />
 
-            {/* Stats */}
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <div className="p-3.5 border border-gray-800 rounded-xl bg-gray-800/80">
-                <p className="text-2xl font-bold text-indigo-400">
+            {/* Quick Metrics */}
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <div className="p-3.5 border border-border-theme rounded-2xl bg-surface shadow-xs">
+                <p className="text-2xl font-bold text-accent-primary">
                   {messages.filter((m) => m.sender === "user").length}
                 </p>
-                <p className="text-xs text-gray-400 mt-0.5">Questions Asked</p>
+                <p className="text-xs text-text-muted mt-0.5 font-medium">Questions Asked</p>
               </div>
-              <div className="p-3.5 border border-gray-800 rounded-xl bg-gray-800/80">
-                <p className="text-2xl font-bold text-emerald-400">
+              <div className="p-3.5 border border-border-theme rounded-2xl bg-surface shadow-xs">
+                <p className="text-2xl font-bold text-[#79C98A]">
                   {documentStatus === "ready" ? "1" : "0"}
                 </p>
-                <p className="text-xs text-gray-400 mt-0.5">Indexed Document</p>
+                <p className="text-xs text-text-muted mt-0.5 font-medium">Indexed Document</p>
               </div>
             </div>
           </div>
         ) : (
-          /* Tab 2: Saved History List */
           <HistoryList
             sessions={sessions}
             activeDocumentId={documentId}
@@ -387,36 +373,36 @@ export default function Home() {
           />
         )}
 
-        {/* Security & Isolation Badge */}
+        {/* Security & Multi-Tenant Isolation Badge */}
         <div className="mt-auto pt-6">
-          <div className="p-3 rounded-xl bg-gray-800/40 border border-gray-800 flex items-center gap-2.5 text-xs text-gray-400">
-            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>Multi-tenant data isolation enabled. Embeddings are strictly bound to your account.</span>
+          <div className="p-3 rounded-xl bg-surface border border-border-theme flex items-center gap-2.5 text-xs text-text-muted shadow-xs">
+            <ShieldCheck className="w-4 h-4 text-[#79C98A] shrink-0" />
+            <span className="leading-snug">Isolated workspace. Your document vectors are strictly tied to your account.</span>
           </div>
         </div>
       </div>
 
-      {/* Right Panel: Chat Interface */}
-      <div className="w-[60%] flex flex-col bg-gray-900">
-        {/* Chat Header */}
-        <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4 bg-gray-900/90 backdrop-blur">
+      {/* Right Area: Conversational Assistant Interface */}
+      <div className="flex-1 flex flex-col bg-bg-primary">
+        {/* Navigation & Chat Top Bar */}
+        <div className="flex items-center justify-between border-b border-border-theme px-6 py-3.5 bg-bg-secondary/90 backdrop-blur shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-1.5 bg-indigo-600/20 rounded-md text-indigo-400">
-              <Bot className="w-5 h-5" />
+            <div className="p-2 bg-surface border border-border-theme rounded-xl text-accent-primary shadow-xs">
+              <Bot className="w-4 h-4" />
             </div>
             <div>
-              <span className="font-semibold text-sm text-gray-200">AI Assistant</span>
-              <div className="flex items-center gap-2">
+              <span className="font-semibold text-xs text-text-primary">LucidChat Assistant</span>
+              <div className="flex items-center gap-2 mt-0.5">
                 <span
                   className={`w-2 h-2 rounded-full ${
                     documentStatus === "ready"
-                      ? "bg-emerald-500"
+                      ? "bg-[#79C98A]"
                       : documentStatus === "processing"
-                      ? "bg-amber-400 animate-pulse"
-                      : "bg-gray-500"
+                      ? "bg-[#E5B95C] animate-pulse"
+                      : "bg-text-muted"
                   }`}
                 />
-                <span className="text-xs text-gray-400">
+                <span className="text-[11px] text-text-muted">
                   {documentStatus === "ready"
                     ? "Document indexed and ready"
                     : documentStatus === "processing"
@@ -430,28 +416,32 @@ export default function Home() {
           <div className="flex items-center gap-3">
             {pdfFile && (
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-300 max-w-[180px] truncate bg-gray-800 px-2.5 py-1 rounded-md border border-gray-700">
+                <span className="text-xs text-text-primary max-w-[190px] truncate bg-surface px-2.5 py-1 rounded-lg border border-border-theme font-medium shadow-xs">
                   {pdfFile.name}
                 </span>
                 <button
                   onClick={handleNewUpload}
-                  className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/20 px-2 py-1 rounded-md transition"
+                  className="flex items-center gap-1 text-xs text-text-primary hover:text-accent-primary bg-surface hover:bg-elevated border border-border-theme px-2.5 py-1 rounded-lg transition cursor-pointer"
                   title="Upload a new document"
                 >
-                  <PlusCircle className="w-3.5 h-3.5" />
+                  <PlusCircle className="w-3.5 h-3.5 text-accent-primary" />
                   New PDF
                 </button>
               </div>
             )}
 
+            {/* Dark/Light Mode Switcher */}
+            <ThemeToggle />
+
+            {/* Authentication Buttons */}
             <SignedOut>
               <SignInButton mode="modal">
-                <button className="text-xs font-medium text-gray-300 hover:text-white px-3 py-1.5">
+                <button className="text-xs font-semibold text-text-secondary hover:text-text-primary px-3 py-1.5 cursor-pointer">
                   Sign In
                 </button>
               </SignInButton>
               <SignUpButton mode="modal">
-                <button className="bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium text-xs h-8 px-3.5 transition">
+                <button className="bg-accent-primary text-black hover:opacity-90 font-bold text-xs h-8 px-3.5 rounded-xl transition cursor-pointer shadow-xs">
                   Sign Up
                 </button>
               </SignUpButton>
@@ -463,8 +453,8 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Chat Messages */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+        {/* Message Thread */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
           {messages.map((msg) => (
             <ChatMessage
               key={msg.id}
@@ -475,17 +465,17 @@ export default function Home() {
           ))}
 
           {isTyping && (
-            <div className="flex gap-3 items-center">
-              <div className="px-4 py-2.5 rounded-2xl bg-gray-800 border border-gray-700 text-gray-400">
+            <div className="flex gap-3 items-center my-2">
+              <div className="px-4 py-2.5 rounded-2xl bg-surface border border-border-theme text-text-muted shadow-xs">
                 <div className="flex gap-1.5 items-center">
-                  <span className="text-xs text-gray-400 mr-1">Consulting document</span>
-                  <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></span>
+                  <span className="text-xs text-text-muted mr-1">Consulting document</span>
+                  <span className="w-1.5 h-1.5 bg-accent-primary rounded-full animate-bounce"></span>
                   <span
-                    className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"
+                    className="w-1.5 h-1.5 bg-accent-primary rounded-full animate-bounce"
                     style={{ animationDelay: "150ms" }}
                   ></span>
                   <span
-                    className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"
+                    className="w-1.5 h-1.5 bg-accent-primary rounded-full animate-bounce"
                     style={{ animationDelay: "300ms" }}
                   ></span>
                 </div>
@@ -495,16 +485,16 @@ export default function Home() {
           <div ref={chatEndRef} />
         </div>
 
-        {/* Warning if not signed in or no doc */}
+        {/* Unauthenticated Notification Banner */}
         {!isSignedIn && (
-          <div className="mx-6 mb-2 p-2.5 bg-indigo-950/40 border border-indigo-800/40 rounded-lg flex items-center gap-2 text-xs text-indigo-300">
-            <AlertTriangle className="w-4 h-4 shrink-0 text-indigo-400" />
-            <span>Please sign in using the top-right button to ask questions about your documents.</span>
+          <div className="mx-6 mb-2 p-2.5 bg-surface border border-border-theme rounded-xl flex items-center gap-2 text-xs text-text-secondary">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-[#E5B95C]" />
+            <span>Please sign in using the top-right button to query your documents.</span>
           </div>
         )}
 
-        {/* Chat Input Bar */}
-        <div className="border-t border-gray-800 px-6 py-4 bg-gray-900">
+        {/* Query Input Bar */}
+        <div className="border-t border-border-theme px-6 py-4 bg-bg-secondary shrink-0">
           <div className="flex gap-3">
             <input
               value={input}
@@ -512,19 +502,19 @@ export default function Home() {
               onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
               placeholder={
                 !isSignedIn
-                  ? "Sign in to chat..."
+                  ? "Sign in to start querying..."
                   : documentStatus !== "ready"
                   ? "Upload and index a PDF first..."
                   : "Ask anything about your document..."
               }
               disabled={!isSignedIn || documentStatus !== "ready" || isTyping}
-              className="flex-1 px-4 py-2.5 rounded-xl text-sm bg-gray-800/80 text-white border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed placeholder-gray-500"
+              className="flex-1 px-4 py-2.5 rounded-xl text-sm bg-surface text-text-primary border border-border-theme focus:outline-none focus:border-accent-primary focus:ring-1 focus:ring-accent-primary disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-text-muted transition"
             />
             <button
               onClick={handleSend}
               disabled={!input.trim() || !isSignedIn || documentStatus !== "ready" || isTyping}
-              className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 disabled:cursor-not-allowed transition flex items-center justify-center shadow-sm"
-              aria-label="Send message"
+              className="px-4 py-2.5 rounded-xl bg-accent-primary text-black hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition font-bold flex items-center justify-center shadow-xs cursor-pointer"
+              aria-label="Send query"
             >
               <Send className="w-4 h-4" />
             </button>

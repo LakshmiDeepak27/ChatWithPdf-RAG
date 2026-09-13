@@ -16,7 +16,7 @@ function renderInlineFormatting(text: string): React.ReactNode[] {
   return tokens.map((token, index) => {
     if (token.startsWith("**") && token.endsWith("**") && token.length >= 4) {
       return (
-        <strong key={index} className="font-semibold text-white">
+        <strong key={index} className="font-semibold text-text-primary">
           {token.slice(2, -2)}
         </strong>
       );
@@ -25,7 +25,7 @@ function renderInlineFormatting(text: string): React.ReactNode[] {
       return (
         <code
           key={index}
-          className="px-1.5 py-0.5 mx-0.5 text-xs bg-gray-800 text-indigo-300 rounded font-mono border border-gray-700"
+          className="px-1.5 py-0.5 mx-0.5 text-xs bg-surface text-accent-primary rounded-md font-mono border border-border-theme"
         >
           {token.slice(1, -1)}
         </code>
@@ -33,7 +33,7 @@ function renderInlineFormatting(text: string): React.ReactNode[] {
     }
     if (token.startsWith("*") && token.endsWith("*") && token.length >= 2) {
       return (
-        <em key={index} className="italic text-gray-200">
+        <em key={index} className="italic text-text-secondary">
           {token.slice(1, -1)}
         </em>
       );
@@ -81,8 +81,8 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
     if (/^[\*\-]\s+/.test(trimmed)) {
       const itemText = trimmed.replace(/^[\*\-]\s+/, "");
       currentList.push(
-        <li key={`li-${lineIdx}`} className="flex items-start gap-2 text-sm text-gray-200">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-2 shrink-0" />
+        <li key={`li-${lineIdx}`} className="flex items-start gap-2.5 text-sm text-text-secondary">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent-primary mt-2 shrink-0 shadow-xs" />
           <span className="flex-1 leading-relaxed">{renderInlineFormatting(itemText)}</span>
         </li>
       );
@@ -95,8 +95,8 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
       if (match) {
         flushList();
         elements.push(
-          <div key={`num-${lineIdx}`} className="flex items-start gap-2 my-1.5 text-sm text-gray-200">
-            <span className="font-semibold text-indigo-400 text-xs mt-0.5 shrink-0 min-w-[1.2rem]">
+          <div key={`num-${lineIdx}`} className="flex items-start gap-2.5 my-1.5 text-sm text-text-secondary">
+            <span className="font-bold text-accent-primary text-xs mt-0.5 shrink-0 min-w-[1.2rem]">
               {match[1]}.
             </span>
             <span className="flex-1 leading-relaxed">{renderInlineFormatting(match[2])}</span>
@@ -114,7 +114,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
       elements.push(
         <h4
           key={`h-${lineIdx}`}
-          className={`font-bold text-white mt-3 mb-1.5 ${
+          className={`font-bold text-text-primary mt-3 mb-1.5 ${
             level === 1 ? "text-base" : level === 2 ? "text-sm" : "text-sm"
           }`}
         >
@@ -127,7 +127,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
     // Normal paragraph line
     flushList();
     elements.push(
-      <p key={`p-${lineIdx}`} className="my-1 text-sm leading-relaxed text-gray-200">
+      <p key={`p-${lineIdx}`} className="my-1 text-sm leading-relaxed text-text-secondary">
         {renderInlineFormatting(trimmed)}
       </p>
     );

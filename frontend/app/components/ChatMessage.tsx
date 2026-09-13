@@ -32,38 +32,40 @@ export default function ChatMessage({ sender, text, timestamp }: ChatMessageProp
 
   return (
     <div
-      className={`flex gap-3 my-2 items-start ${
+      className={`flex gap-3 my-3 items-start transition-all ${
         isUser ? "justify-end" : "justify-start"
       }`}
     >
       {!isUser && (
-        <div className="w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0 mt-1">
+        <div className="w-8 h-8 rounded-xl bg-surface border border-border-theme flex items-center justify-center text-accent-primary shrink-0 mt-0.5 shadow-xs">
           <Bot className="w-4 h-4" />
         </div>
       )}
 
       <div className={`flex flex-col ${isUser ? "items-end" : "items-start"} max-w-[85%] md:max-w-[78%]`}>
         <div
-          className={`px-4 py-3 rounded-2xl shadow-sm ${
+          className={`px-4 py-3 rounded-2xl transition-all shadow-xs ${
             isUser
-              ? "bg-indigo-600 text-white rounded-tr-sm"
-              : "bg-gray-800 text-gray-100 border border-gray-700/80 rounded-tl-sm"
+              ? "bg-accent-primary text-black font-medium rounded-tr-xs"
+              : "bg-surface text-text-primary border border-border-theme rounded-tl-xs"
           }`}
         >
           {isUser ? (
-            <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
+            <p className="text-sm leading-relaxed whitespace-pre-wrap selection:bg-black selection:text-white">
+              {text}
+            </p>
           ) : (
             <MarkdownRenderer content={text} />
           )}
         </div>
 
-        <span className="text-[10px] text-gray-500 mt-1 px-1">
+        <span className="text-[10px] text-text-muted mt-1 px-1">
           {mounted ? timeLabel : ""}
         </span>
       </div>
 
       {isUser && (
-        <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shrink-0 mt-1 shadow-sm">
+        <div className="w-8 h-8 rounded-xl bg-accent-primary flex items-center justify-center text-black shrink-0 mt-0.5 shadow-xs font-bold">
           <User className="w-4 h-4" />
         </div>
       )}
