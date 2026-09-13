@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { Bot, User } from "lucide-react";
+import MarkdownRenderer from "./MarkdownRenderer";
 
 interface ChatMessageProps {
   sender: "user" | "bot";
@@ -16,7 +18,6 @@ export default function ChatMessage({ sender, text, timestamp }: ChatMessageProp
   }, []);
 
   const timeLabel = useMemo(() => {
-    // Avoid locale-dependent formatting differences between server and client.
     const hours24 = timestamp.getHours();
     const hours12 = ((hours24 + 11) % 12) + 1;
     const minutes = timestamp.getMinutes();
@@ -27,24 +28,45 @@ export default function ChatMessage({ sender, text, timestamp }: ChatMessageProp
     )} ${ampm}`;
   }, [timestamp]);
 
+  const isUser = sender === "user";
+
   return (
     <div
-      className={`flex gap-3 ${
-        sender === "user" ? "justify-end" : "justify-start"
+      className={`flex gap-3 my-2 items-start ${
+        isUser ? "justify-end" : "justify-start"
       }`}
     >
-      <div
-        className={`px-4 py-2 rounded-2xl max-w-xs shadow-sm ${
-          sender === "user"
-            ? "bg-indigo-600 text-white"
-            : "bg-gray-700 text-gray-100"
-        }`}
-      >
-        <p className="text-sm">{text}</p>
+      {!isUser && (
+        <div className="w-8 h-8 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0 mt-1">
+          <Bot className="w-4 h-4" />
+        </div>
+      )}
+
+      <div className={`flex flex-col ${isUser ? "items-end" : "items-start"} max-w-[85%] md:max-w-[78%]`}>
+        <div
+          className={`px-4 py-3 rounded-2xl shadow-sm ${
+            isUser
+              ? "bg-indigo-600 text-white rounded-tr-sm"
+              : "bg-gray-800 text-gray-100 border border-gray-700/80 rounded-tl-sm"
+          }`}
+        >
+          {isUser ? (
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>
+          ) : (
+            <MarkdownRenderer content={text} />
+          )}
+        </div>
+
+        <span className="text-[10px] text-gray-500 mt-1 px-1">
+          {mounted ? timeLabel : ""}
+        </span>
       </div>
-      <span className="text-xs text-gray-500 self-end">
-        {mounted ? timeLabel : ""}
-      </span>
+
+      {isUser && (
+        <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shrink-0 mt-1 shadow-sm">
+          <User className="w-4 h-4" />
+        </div>
+      )}
     </div>
   );
 }
