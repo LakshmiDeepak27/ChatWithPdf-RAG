@@ -46,7 +46,7 @@ export default function ChatMessage({ sender, text, timestamp }: ChatMessageProp
         <div
           className={`px-4 py-3 rounded-2xl transition-all shadow-xs ${
             isUser
-              ? "bg-accent-primary text-black font-medium rounded-tr-xs"
+              ? "bg-accent-primary text-[var(--accent-contrast)] font-medium rounded-tr-xs"
               : "bg-surface text-text-primary border border-border-theme rounded-tl-xs"
           }`}
         >

@@ -5,28 +5,28 @@
  * ---------------------------------------------------- */
 
 :root {
-  /* Light Mode Palette */
-  --bg-primary: #F6F8F6;
-  --bg-secondary: #FFFFFF;
-  --bg-surface: #EDF2EE;
-  --bg-elevated: #FFFFFF;
+  /* Light Mode Palette — Calmed, Eye-Friendly Forest Paper System (Zero Glare) */
+  --bg-primary: #EAEFEA;        /* Gentle sage-linen canvas, reduces blinding white glare */
+  --bg-secondary: #F3F6F2;      /* Calmed panel & workspace surface */
+  --bg-surface: #DEE6DF;        /* Soft neutral surface for badges and cards */
+  --bg-elevated: #F8FAF7;       /* Gentle elevated card tone */
 
-  --text-primary: #121714;
-  --text-secondary: #3D4742;
-  --text-muted: #6B7770;
+  --text-primary: #17221C;      /* Deep charcoal-forest, crisp yet easy on the eyes */
+  --text-secondary: #3E4E45;    /* Muted secondary text */
+  --text-muted: #697A71;        /* Relaxed tertiary text */
 
-  --accent-primary: #4F8914;
-  --accent-hover: #40710F;
-  --accent-soft: #E8F4D9;
+  --accent-primary: #346B22;    /* Calibrated forest lime accent, readable and refined */
+  --accent-hover: #265218;
+  --accent-soft: #DCE9D5;
   --accent-contrast: #FFFFFF;
 
-  --border-theme: #D4DCD7;
-  --divider-theme: #E2E8E4;
+  --border-theme: #CAD5CD;      /* Gentle border boundary */
+  --divider-theme: #D9E3DC;
 
-  --color-success: #28833B;
-  --color-warning: #B38612;
-  --color-error: #D64545;
-  --color-info: #3573A3;
+  --color-success: #267A38;
+  --color-warning: #996F08;
+  --color-error: #C93C3C;
+  --color-info: #2D6592;
 }
 
 html.dark {
