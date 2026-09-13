@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState } from "react";
-import { Upload, Loader2, Check, Sparkles, AlertCircle, ShieldAlert } from "lucide-react";
+import { Upload, Loader2, Check, Sparkles, AlertCircle, ShieldAlert, RotateCw } from "lucide-react";
 import { useAuth } from "@clerk/nextjs";
 
 const API_BASE_URL = (
@@ -45,7 +45,7 @@ export default function FileUpload({
   const pollDocumentStatus = (documentId: string, file: File) => {
     clearPolling();
     let attempts = 0;
-    const maxAttempts = 60; // 60 * 2s = 120s timeout
+    const maxAttempts = 90; // 90 * 1.5s = 135s timeout
 
     pollIntervalRef.current = setInterval(async () => {
       attempts += 1;
@@ -66,36 +66,45 @@ export default function FileUpload({
         });
 
         if (!res.ok) {
+          // If transient 5xx, don't abort immediately; allow next poll
+          if (res.status >= 500 && attempts < maxAttempts - 5) {
+            return;
+          }
           throw new Error(`Failed to check status (${res.status})`);
         }
 
         const data = await res.json();
 
-        if (data.status === "processing") {
+        if (data.status === "queued") {
           setCurrentStatus("processing");
-          const calcProgress = Math.min(85, Math.max(30, data.progress || 35));
+          setUploadProgress((prev) => Math.max(prev, 25));
+          setStatusMessage(data.message || "Document queued for processing...");
+          onStatusChange?.("processing");
+        } else if (data.status === "processing") {
+          setCurrentStatus("processing");
+          const calcProgress = Math.min(92, Math.max(35, data.progress || 45));
           setUploadProgress(calcProgress);
-          setStatusMessage("Analyzing document and generating embeddings...");
+          setStatusMessage(data.message || "Analyzing document and generating embeddings...");
           onStatusChange?.("processing");
         } else if (data.status === "ready") {
           clearPolling();
           setCurrentStatus("ready");
           setUploadProgress(100);
-          setStatusMessage(`Ready! ${data.totalChunks || 0} chunks indexed.`);
+          setStatusMessage(data.message || `Ready! ${data.totalChunks || 0} chunks indexed.`);
           setErrorMessage(null);
           onStatusChange?.("ready");
           onDocumentReady?.(documentId, file);
         } else if (data.status === "failed") {
           clearPolling();
           setCurrentStatus("failed");
-          setErrorMessage(data.error || "Document processing failed.");
-          onStatusChange?.("failed", data.error);
+          setErrorMessage(data.error || data.message || "Document processing failed.");
+          onStatusChange?.("failed", data.error || data.message);
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn("Polling error:", msg);
+        console.warn("[UploadPoll] Status check:", msg);
       }
-    }, 2000);
+    }, 1500);
   };
 
   const uploadPdf = async (file: File) => {
@@ -106,9 +115,12 @@ export default function FileUpload({
 
     setErrorMessage(null);
     setCurrentStatus("uploading");
-    setUploadProgress(15);
+    setUploadProgress(20);
     setStatusMessage("Uploading document to secure server...");
     onStatusChange?.("uploading");
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 35000);
 
     try {
       const token = await getToken();
@@ -121,7 +133,10 @@ export default function FileUpload({
           Authorization: `Bearer ${token}`,
         },
         body: formData,
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -129,17 +144,23 @@ export default function FileUpload({
       }
 
       const result = await res.json();
-      setUploadProgress(30);
+      setUploadProgress(35);
       setCurrentStatus("processing");
-      setStatusMessage("Document queued. Processing embeddings...");
+      setStatusMessage("Document received. Processing embeddings...");
       onStatusChange?.("processing");
 
-      // Start real backend status polling
+      // Start backend status polling
       pollDocumentStatus(result.documentId, file);
     } catch (err: unknown) {
+      clearTimeout(timeoutId);
       clearPolling();
       setCurrentStatus("failed");
-      const errorMsg = err instanceof Error ? err.message : "Failed to upload document.";
+      const errorMsg =
+        err instanceof Error && err.name === "AbortError"
+          ? "Upload request timed out. The backend might be cold-starting — click Retry to send again."
+          : err instanceof Error
+          ? err.message
+          : "Failed to upload document.";
       setErrorMessage(errorMsg);
       onStatusChange?.("failed", errorMsg);
     }
@@ -228,9 +249,23 @@ export default function FileUpload({
 
       {/* Error Message */}
       {errorMessage && (
-        <div className="mt-4 p-3 bg-red-950/60 border border-red-800/80 rounded-xl flex items-start gap-2 text-red-300 text-xs">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
-          <p className="flex-1">{errorMessage}</p>
+        <div className="mt-4 p-3 bg-red-950/60 border border-red-800/80 rounded-xl flex items-start justify-between gap-2 text-red-300 text-xs">
+          <div className="flex items-start gap-2 flex-1">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+            <p className="flex-1">{errorMessage}</p>
+          </div>
+          {pdfFile && currentStatus === "failed" && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (pdfFile) uploadPdf(pdfFile);
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 bg-red-800/80 hover:bg-red-700 text-white rounded-md text-xs font-medium transition"
+            >
+              <RotateCw className="w-3 h-3" />
+              Retry
+            </button>
+          )}
         </div>
       )}
 

@@ -112,13 +112,12 @@ app.get('/health', async (req, res) => {
   const timeoutPromise = (ms) =>
     new Promise((_, reject) => setTimeout(() => reject(new Error('Probe timeout')), ms));
 
-  // Check Redis connectivity (with 2.5s timeout)
+  // Check Redis connectivity (with 2s timeout)
   try {
-    const pingResult = await Promise.race([redisConnection.ping(), timeoutPromise(2500)]);
+    const pingResult = await Promise.race([redisConnection.ping(), timeoutPromise(2000)]);
     healthStatus.services.redis = pingResult === 'PONG' ? 'healthy' : 'degraded';
   } catch (err) {
-    healthStatus.services.redis = 'unhealthy';
-    isHealthy = false;
+    healthStatus.services.redis = `degraded: ${err.message}`;
   }
 
   // Check Qdrant connectivity (with 2.5s timeout)
@@ -131,13 +130,17 @@ app.get('/health', async (req, res) => {
     await Promise.race([qdrant.getCollections(), timeoutPromise(2500)]);
     healthStatus.services.qdrant = 'healthy';
   } catch (err) {
-    healthStatus.services.qdrant = 'unhealthy';
+    healthStatus.services.qdrant = `unhealthy: ${err.message}`;
     isHealthy = false;
   }
 
   if (!isHealthy) {
-    healthStatus.status = 'degraded';
+    healthStatus.status = 'unhealthy';
     return res.status(503).json(healthStatus);
+  }
+
+  if (healthStatus.services.redis !== 'healthy') {
+    healthStatus.status = 'operational_fallback';
   }
 
   return res.status(200).json(healthStatus);

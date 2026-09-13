@@ -6,8 +6,9 @@ const { v4: uuidv4 } = require('uuid');
 const { getAuth } = require('@clerk/express');
 const rateLimit = require('express-rate-limit');
 const { uploadQueue, UPLOAD_QUEUE_NAME } = require('../queues/uploadQueue');
-const { redisConnection } = require('../config/redis');
 const { isValidPdfBuffer } = require('../utils/pdfLoader');
+const { setDocumentStatus, getDocumentStatus } = require('../services/documentStatusService');
+const { processPdf } = require('../services/pdfProcessor');
 
 const router = express.Router();
 
@@ -116,48 +117,67 @@ router.post(
         });
       }
 
-      // Record initial document status in Redis
+      // 1. Store initial status in resilient status service
       const initialStatus = {
         documentId,
         userId,
         filename: req.file.originalname,
         size: req.file.size,
         status: 'queued',
-        progress: 0,
+        progress: 10,
+        message: 'Document uploaded. Initializing indexing pipeline...',
         createdAt: new Date().toISOString(),
       };
 
-      await redisConnection.set(
-        `doc:status:${documentId}`,
-        JSON.stringify(initialStatus),
-        'EX',
-        7 * 24 * 3600 // 7 days
-      );
+      await setDocumentStatus(documentId, initialStatus);
 
-      // Enqueue processing job for BullMQ worker
-      const job = await uploadQueue.add(UPLOAD_QUEUE_NAME, {
-        documentId,
-        userId,
-        filename: req.file.originalname,
-        path: filePath,
-        size: req.file.size,
-      });
+      // 2. Attempt to enqueue in BullMQ queue with a 2-second timeout
+      let enqueuedToBull = false;
+      let job = null;
+      try {
+        job = await Promise.race([
+          uploadQueue.add(UPLOAD_QUEUE_NAME, {
+            documentId,
+            userId,
+            filename: req.file.originalname,
+            path: filePath,
+            size: req.file.size,
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('BullMQ add timeout (2s)')), 2000)),
+        ]);
+        enqueuedToBull = true;
+        console.log(`[Upload] Document ${documentId} enqueued in BullMQ job ${job.id} for user ${userId}`);
+      } catch (queueErr) {
+        console.warn(`[Upload] BullMQ queue unavailable (${queueErr.message}). Initiating direct background processor.`);
+      }
 
-      console.log(`[Upload] Document ${documentId} enqueued in job ${job.id} for user ${userId}`);
+      // 3. Fallback: If BullMQ/Redis is unavailable, process asynchronously in background
+      if (!enqueuedToBull) {
+        setImmediate(() => {
+          processPdf({
+            documentId,
+            userId,
+            filename: req.file.originalname,
+            filePath,
+          }).catch((err) => {
+            console.error(`[Upload:Fallback] Direct processing failed for doc ${documentId}:`, err.message);
+          });
+        });
+      }
 
+      // 4. Return HTTP 202 immediately (typically < 50ms)
       return res.status(202).json({
         status: 'queued',
         documentId,
-        jobId: job.id,
+        jobId: job ? job.id : `direct-${Date.now()}`,
         filename: req.file.originalname,
       });
     } catch (error) {
       console.error('[Upload] Error queuing file upload:', error.message);
-      // Clean up uploaded file if an error occurred before queueing
       if (req.file && req.file.path && fs.existsSync(req.file.path)) {
         try { fs.unlinkSync(req.file.path); } catch (_) {}
       }
-      return res.status(500).json({ error: 'Failed to process and queue file upload.' });
+      return res.status(500).json({ error: error.message || 'Failed to process and queue file upload.' });
     }
   }
 );
@@ -171,12 +191,11 @@ router.get('/status/:documentId', requireAuth, async (req, res) => {
     const { documentId } = req.params;
     const userId = req.userId;
 
-    const rawData = await redisConnection.get(`doc:status:${documentId}`);
-    if (!rawData) {
+    const doc = await getDocumentStatus(documentId);
+
+    if (!doc) {
       return res.status(404).json({ error: 'Document not found or status has expired.' });
     }
-
-    const doc = JSON.parse(rawData);
 
     // Multi-tenant check: User can ONLY check status of their own documents
     if (doc.userId !== userId) {
@@ -189,9 +208,11 @@ router.get('/status/:documentId', requireAuth, async (req, res) => {
       progress: doc.progress || 0,
       filename: doc.filename,
       error: doc.error || null,
+      message: doc.message || null,
       totalChunks: doc.totalChunks || 0,
       pages: doc.pages || null,
       completedAt: doc.completedAt || null,
+      durationSeconds: doc.durationSeconds || null,
     });
   } catch (error) {
     console.error('[Upload] Error fetching document status:', error.message);

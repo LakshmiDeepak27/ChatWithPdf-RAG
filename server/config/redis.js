@@ -14,18 +14,22 @@ function normalizeRedisUrl(rawUrl) {
   return url;
 }
 
-function getRedisConfig() {
+function getRedisConfig(forBull = false) {
   const rawUrl = process.env.REDIS_URL;
   const normalizedUrl = normalizeRedisUrl(rawUrl);
 
   const commonOptions = {
+    // BullMQ requires maxRetriesPerRequest to be null
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
-    keepAlive: 10000,
-    connectTimeout: 10000,
+    connectTimeout: 5000,
+    // When offline, do NOT queue indefinitely for normal express commands to prevent hung requests
+    enableOfflineQueue: forBull,
     retryStrategy(times) {
-      const delay = Math.min(times * 200, 3000);
-      return delay;
+      if (!forBull && times > 5) {
+        return null; // Stop retrying quickly for express client if Redis is down
+      }
+      return Math.min(times * 300, 3000);
     },
   };
 
@@ -52,17 +56,23 @@ function getRedisConfig() {
 }
 
 /**
- * Creates a brand new, dedicated Redis connection.
- * Essential for BullMQ Queue and Worker to prevent command blocking.
+ * Creates a dedicated Redis client.
  */
 function createRedisClient(name = 'default') {
-  const cfg = getRedisConfig();
+  const isBull = name === 'queue' || name === 'worker';
+  const cfg = getRedisConfig(isBull);
+
   const client = cfg.url
     ? new Redis(cfg.url, cfg.options)
     : new Redis(cfg.options);
 
   client.on('error', (err) => {
-    console.error(`[Redis:${name}] Connection error:`, err.message);
+    // Suppress repetitive disconnect spam in stdout
+    if (!client._hasLoggedError) {
+      console.warn(`[Redis:${name}] Connection warning: ${err.message}`);
+      client._hasLoggedError = true;
+      setTimeout(() => { client._hasLoggedError = false; }, 30000);
+    }
   });
 
   return client;

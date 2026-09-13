@@ -1,3 +1,4 @@
+require('dotenv').config();
 /**
  * Process Supervisor for 100% Free Single-Container Deployment (e.g. Render Free Tier)
  * Spawns the Express API and BullMQ Worker as independent OS processes.
