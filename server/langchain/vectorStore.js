@@ -27,6 +27,24 @@ async function getVectorStore() {
   }
 
   try {
+    // Proactively verify and auto-create Qdrant collection if missing
+    try {
+      const collections = await client.getCollections();
+      const exists = collections.collections?.some((c) => c.name === collectionName);
+      if (!exists) {
+        console.log(`[Qdrant] Collection "${collectionName}" not found. Auto-creating with 3072 dims...`);
+        await client.createCollection(collectionName, {
+          vectors: {
+            size: 3072,
+            distance: 'Cosine',
+          },
+        });
+        console.log(`[Qdrant] Collection "${collectionName}" created successfully.`);
+      }
+    } catch (collErr) {
+      console.warn('[Qdrant] Collection check/create warning:', collErr.message);
+    }
+
     vectorStoreInstance = await QdrantVectorStore.fromExistingCollection(
       embeddings,
       {
