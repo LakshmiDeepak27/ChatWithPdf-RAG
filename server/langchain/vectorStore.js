@@ -1,42 +1,75 @@
-require("dotenv").config();
+require('dotenv').config();
 
-const { QdrantVectorStore } = require("@langchain/qdrant");
-const { QdrantClient } = require("@qdrant/js-client-rest");
-const { GoogleGenerativeAIEmbeddings } = require("@langchain/google-genai");
+const { QdrantVectorStore } = require('@langchain/qdrant');
+const { QdrantClient } = require('@qdrant/js-client-rest');
+const { GoogleGenerativeAIEmbeddings } = require('@langchain/google-genai');
+
+const qdrantUrl = process.env.QDRANT_URL || 'http://localhost:6333';
+const qdrantApiKey = process.env.QDRANT_API_KEY || undefined;
+const collectionName = process.env.QDRANT_COLLECTION || 'pdf_documents';
 
 const client = new QdrantClient({
-  url: process.env.QDRANT_URL,
-  checkCompatibility: false
+  url: qdrantUrl,
+  apiKey: qdrantApiKey,
+  checkCompatibility: false,
 });
 
 const embeddings = new GoogleGenerativeAIEmbeddings({
   apiKey: process.env.GOOGLE_API_KEY,
-  model: "models/gemini-embedding-001"
+  model: process.env.GEMINI_EMBEDDING_MODEL || 'models/gemini-embedding-001',
 });
 
+let vectorStoreInstance = null;
+
 async function getVectorStore() {
+  if (vectorStoreInstance) {
+    return vectorStoreInstance;
+  }
+
   try {
-    const vectorStore = await QdrantVectorStore.fromExistingCollection(
+    vectorStoreInstance = await QdrantVectorStore.fromExistingCollection(
       embeddings,
       {
         client,
-        collectionName: process.env.QDRANT_COLLECTION
+        collectionName,
       }
     );
-    return vectorStore;
+    return vectorStoreInstance;
   } catch (error) {
-    console.log("Collection not found or error occurred, creating new collection in Qdrant...");
-    // Initialize with an empty document to ensure collection creation
-    const vectorStore = await QdrantVectorStore.fromDocuments(
-      [],
-      embeddings,
-      {
-        client,
-        collectionName: process.env.QDRANT_COLLECTION
-      }
-    );
-    return vectorStore;
+    console.error('Error initializing QdrantVectorStore:', error.message);
+    throw error;
   }
 }
 
-module.exports = { getVectorStore };
+/**
+ * Builds a strict multi-tenant filter for Qdrant queries.
+ * Enforces ownership: userId must match authenticated user AND documentId must match requested document.
+ */
+function buildOwnershipFilter(userId, documentId) {
+  if (!userId) {
+    throw new Error('User ID is required to build Qdrant filter');
+  }
+
+  const conditions = [
+    { key: 'metadata.userId', match: { value: String(userId) } },
+  ];
+
+  if (documentId) {
+    conditions.push({
+      key: 'metadata.documentId',
+      match: { value: String(documentId) },
+    });
+  }
+
+  return {
+    must: conditions,
+  };
+}
+
+module.exports = {
+  getVectorStore,
+  buildOwnershipFilter,
+  client,
+  embeddings,
+  collectionName,
+};

@@ -1,14 +1,48 @@
 const Redis = require('ioredis');
 
-const redisConfig = process.env.REDIS_URL || {
-    host: process.env.REDIS_HOST || 'localhost',
-    port: process.env.REDIS_PORT || 6379,
-    maxRetriesPerRequest: null
-};
+function getRedisConfig() {
+  const redisUrl = process.env.REDIS_URL;
+  const commonOptions = {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    retryStrategy(times) {
+      const delay = Math.min(times * 200, 3000);
+      return delay;
+    }
+  };
 
-const redisConnection = new Redis(redisConfig);
+  if (redisUrl) {
+    return {
+      url: redisUrl,
+      options: commonOptions
+    };
+  }
+
+  return {
+    options: {
+      host: process.env.REDIS_HOST || 'localhost',
+      port: Number(process.env.REDIS_PORT) || 6379,
+      password: process.env.REDIS_PASSWORD || undefined,
+      ...commonOptions
+    }
+  };
+}
+
+const config = getRedisConfig();
+const redisConnection = config.url
+  ? new Redis(config.url, config.options)
+  : new Redis(config.options);
+
+redisConnection.on('connect', () => {
+  console.log('Connected to Redis/Valkey successfully.');
+});
+
+redisConnection.on('error', (err) => {
+  console.error('Redis connection error:', err.message);
+});
 
 module.exports = {
-    redisConnection,
-    redisConfig
+  redisConnection,
+  redisConfig: config.url ? config.url : config.options,
+  getRedisConfig
 };

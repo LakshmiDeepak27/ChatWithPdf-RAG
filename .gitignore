@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Next.js build
+.next/
+out/
+build/
+dist/
+
+# Uploads & temporary runtime files
+uploads/
+server/uploads/*
+!server/uploads/.gitkeep
+temp/
+tmp/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+server/server-error.log
+server/worker-error.log
+
+# Operating System files
+.DS_Store
+Thumbs.db
+*.pem
+
+# Clerk local credentials
+.clerk/
+
+# IDE files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

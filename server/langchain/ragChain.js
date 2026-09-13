@@ -1,65 +1,98 @@
-const { ChatGoogleGenerativeAI } = require("@langchain/google-genai");
-const { ChatPromptTemplate } = require("@langchain/core/prompts");
-const { StringOutputParser } = require("@langchain/core/output_parsers");
-const { RunnableSequence, RunnablePassthrough } = require("@langchain/core/runnables");
-const { getVectorStore } = require("./vectorStore");
 require('dotenv').config();
 
-// Define a prompt template for our RAG system
-const systemPrompt = `You are an AI assistant for the TalkToPDF application.
-Use the following pieces of retrieved context to answer the user's question. 
-If you don't know the answer based on the context, just say that you don't know. 
-Try to keep the answer concise and relevant to the provided document context.
+const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
+const { ChatPromptTemplate } = require('@langchain/core/prompts');
+const { StringOutputParser } = require('@langchain/core/output_parsers');
+const { RunnableSequence } = require('@langchain/core/runnables');
+const { getVectorStore, buildOwnershipFilter } = require('./vectorStore');
 
-Context: {context}
+const systemPrompt = `You are a helpful and precise AI assistant for the TalkToPDF application.
+Use the following pieces of retrieved context from the user's uploaded PDF document to answer their question.
+If the answer cannot be determined from the context, politely state that the information is not found in the uploaded document.
+Do not hallucinate or reference documents that do not belong to the user.
+Keep your response concise, well-structured, and accurate.
 
-Question: {question}`;
+Context:
+{context}
+
+Question:
+{question}
+`;
 
 const prompt = ChatPromptTemplate.fromTemplate(systemPrompt);
 
-// Initialize the Gemini LLM
-const llm = new ChatGoogleGenerativeAI({
-    modelName: "models/gemini-flash-latest",
+function getLLM() {
+  const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+  return new ChatGoogleGenerativeAI({
+    modelName: modelName.startsWith('models/') ? modelName : `models/${modelName}`,
     apiKey: process.env.GOOGLE_API_KEY,
-    temperature: 0.3,
-});
-
-async function createRAGChain() {
-    // 1. Get the Vector Store
-    const vectorStore = await getVectorStore();
-    
-    // 2. Create the Retriever from the Vector Store
-    const retriever = vectorStore.asRetriever();
-
-    // 3. Format documents into a single string
-    const formatDocs = (docs) => docs.map((doc) => doc.pageContent).join("\\n\\n");
-    
-    // 4. Create the LangChain Expression Language (LCEL) chain
-    const ragChain = RunnableSequence.from([
-        {
-            context: retriever.pipe(formatDocs),
-            question: new RunnablePassthrough()
-        },
-        prompt,
-        llm,
-        new StringOutputParser()
-    ]);
-    
-    return ragChain;
+    temperature: 0.2,
+  });
 }
 
-async function askQuestion(question) {
-    try {
-        const chain = await createRAGChain();
-        const response = await chain.invoke(question);
-        
-        return response; // StringOutputParser returns directly the string
-    } catch (error) {
-        console.error("Error generating answer in ragChain:", error);
-        throw error;
+/**
+ * Ask question with strict multi-user & document isolation
+ * @param {string} question - The user query
+ * @param {string} userId - Authenticated user ID from Clerk
+ * @param {string} documentId - The target document ID
+ */
+async function askQuestion(question, userId, documentId) {
+  if (!question || typeof question !== 'string') {
+    throw new Error('Question must be a non-empty string');
+  }
+  if (!userId) {
+    throw new Error('Authenticated userId is required for document retrieval');
+  }
+  if (!documentId) {
+    throw new Error('Document ID is required for chat');
+  }
+
+  try {
+    const vectorStore = await getVectorStore();
+    const filter = buildOwnershipFilter(userId, documentId);
+
+    // Retrieve documents specifically isolated to this user and document
+    const retriever = vectorStore.asRetriever({
+      filter,
+      k: 5,
+    });
+
+    const formatDocs = (docs) => {
+      if (!docs || docs.length === 0) {
+        return 'No relevant document context found.';
+      }
+      return docs.map((doc, idx) => `[Excerpt ${idx + 1}]:\n${doc.pageContent}`).join('\n\n');
+    };
+
+    const llm = getLLM();
+
+    const ragChain = RunnableSequence.from([
+      {
+        context: async (input) => {
+          const docs = await retriever.invoke(input.question);
+          return formatDocs(docs);
+        },
+        question: (input) => input.question,
+      },
+      prompt,
+      llm,
+      new StringOutputParser(),
+    ]);
+
+    const answer = await ragChain.invoke({ question: question.trim() });
+    return answer;
+  } catch (error) {
+    console.error(`Error generating answer for user=${userId} doc=${documentId}:`, error.message);
+    if (error.message && error.message.includes('429')) {
+      throw new Error('Gemini API rate limit reached. Please wait a moment and try again.');
     }
+    if (error.message && error.message.includes('API key')) {
+      throw new Error('AI service configuration error. Please contact the administrator.');
+    }
+    throw error;
+  }
 }
 
 module.exports = {
-    askQuestion
+  askQuestion,
 };

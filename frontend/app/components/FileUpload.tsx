@@ -1,74 +1,178 @@
 "use client";
 
 import React, { useRef, useState } from "react";
-import { Upload, Loader2, Check, Sparkles } from "lucide-react";
+import { Upload, Loader2, Check, Sparkles, AlertCircle, ShieldAlert } from "lucide-react";
+import { useAuth } from "@clerk/nextjs";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000";
 
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
+  onDocumentReady?: (documentId: string, file: File) => void;
+  onStatusChange?: (
+    status: "idle" | "uploading" | "processing" | "ready" | "failed",
+    message?: string
+  ) => void;
 }
 
-export default function FileUpload({ onFileSelect }: FileUploadProps) {
+export default function FileUpload({
+  onFileSelect,
+  onDocumentReady,
+  onStatusChange,
+}: FileUploadProps) {
+  const { getToken, isSignedIn } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [statusMessage, setStatusMessage] = useState<string>("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [currentStatus, setCurrentStatus] = useState<
+    "idle" | "uploading" | "processing" | "ready" | "failed"
+  >("idle");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const clearPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  const pollDocumentStatus = (documentId: string, file: File) => {
+    clearPolling();
+    let attempts = 0;
+    const maxAttempts = 60; // 60 * 2s = 120s timeout
+
+    pollIntervalRef.current = setInterval(async () => {
+      attempts += 1;
+      if (attempts > maxAttempts) {
+        clearPolling();
+        setCurrentStatus("failed");
+        setErrorMessage("Document processing timed out. Please try re-uploading.");
+        onStatusChange?.("failed", "Processing timed out");
+        return;
+      }
+
+      try {
+        const token = await getToken();
+        const res = await fetch(`${API_BASE_URL}/upload/status/${documentId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!res.ok) {
+          throw new Error(`Failed to check status (${res.status})`);
+        }
+
+        const data = await res.json();
+
+        if (data.status === "processing") {
+          setCurrentStatus("processing");
+          const calcProgress = Math.min(85, Math.max(30, data.progress || 35));
+          setUploadProgress(calcProgress);
+          setStatusMessage("Analyzing document and generating embeddings...");
+          onStatusChange?.("processing");
+        } else if (data.status === "ready") {
+          clearPolling();
+          setCurrentStatus("ready");
+          setUploadProgress(100);
+          setStatusMessage(`Ready! ${data.totalChunks || 0} chunks indexed.`);
+          setErrorMessage(null);
+          onStatusChange?.("ready");
+          onDocumentReady?.(documentId, file);
+        } else if (data.status === "failed") {
+          clearPolling();
+          setCurrentStatus("failed");
+          setErrorMessage(data.error || "Document processing failed.");
+          onStatusChange?.("failed", data.error);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn("Polling error:", msg);
+      }
+    }, 2000);
+  };
 
   const uploadPdf = async (file: File) => {
-    const formData = new FormData();
-    formData.append("pdf", file);
+    if (!isSignedIn) {
+      setErrorMessage("Please sign in with Clerk before uploading a PDF.");
+      return;
+    }
 
-    const res = await fetch(`${API_BASE_URL}/upload/pdf`, {
-      method: "POST",
-      body: formData,
-    });
+    setErrorMessage(null);
+    setCurrentStatus("uploading");
+    setUploadProgress(15);
+    setStatusMessage("Uploading document to secure server...");
+    onStatusChange?.("uploading");
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`Upload failed (${res.status}): ${text}`);
+    try {
+      const token = await getToken();
+      const formData = new FormData();
+      formData.append("pdf", file);
+
+      const res = await fetch(`${API_BASE_URL}/upload/pdf`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Upload failed with status ${res.status}`);
+      }
+
+      const result = await res.json();
+      setUploadProgress(30);
+      setCurrentStatus("processing");
+      setStatusMessage("Document queued. Processing embeddings...");
+      onStatusChange?.("processing");
+
+      // Start real backend status polling
+      pollDocumentStatus(result.documentId, file);
+    } catch (err: unknown) {
+      clearPolling();
+      setCurrentStatus("failed");
+      const errorMsg = err instanceof Error ? err.message : "Failed to upload document.";
+      setErrorMessage(errorMsg);
+      onStatusChange?.("failed", errorMsg);
     }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && file.type === "application/pdf") {
-      setPdfFile(file);
-      console.log(file);
-
-      await uploadPdf(file);
-      simulateUpload();
-      onFileSelect(file);
+    if (file) {
+      validateAndProcessFile(file);
     }
   };
 
-  const simulateUpload = () => {
-    setUploadProgress(0);
-    const interval = setInterval(() => {
-      setUploadProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          return 100;
-        }
-        return prev + 10;
-      });
-    }, 100);
+  const validateAndProcessFile = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
+      setErrorMessage("Please upload a valid PDF document (.pdf extension).");
+      return;
+    }
+
+    if (file.size > 50 * 1024 * 1024) {
+      setErrorMessage("File exceeds the maximum allowed size of 50MB.");
+      return;
+    }
+
+    setPdfFile(file);
+    onFileSelect(file);
+    await uploadPdf(file);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files?.[0];
-    if (file && file.type === "application/pdf") {
-      setPdfFile(file);
-
-      uploadPdf(file).catch((err) => {
-        console.error(err);
-      });
-      simulateUpload();
-      onFileSelect(file);
+    if (file) {
+      validateAndProcessFile(file);
     }
   };
 
@@ -94,53 +198,90 @@ export default function FileUpload({ onFileSelect }: FileUploadProps) {
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => {
+          if (!isSignedIn) {
+            setErrorMessage("Please sign in using the button in the top right before uploading.");
+            return;
+          }
+          fileInputRef.current?.click();
+        }}
         className={`flex flex-col justify-center items-center border-2 border-dashed rounded-xl cursor-pointer transition p-8 ${
           isDragging
             ? "border-indigo-400 bg-gray-700"
-            : "border-gray-600 hover:border-indigo-400"
+            : "border-gray-600 hover:border-indigo-400 bg-gray-800/60"
         }`}
       >
         <input
           ref={fileInputRef}
           type="file"
-          accept="application/pdf"
+          accept="application/pdf,.pdf"
           onChange={handleFileChange}
           className="hidden"
         />
         <Upload className="w-10 h-10 text-indigo-400 mb-3" />
-        <p className="font-medium">
+        <p className="font-medium text-center">
           {isDragging ? "Drop your PDF here" : "Drop PDF or click to upload"}
         </p>
-        <p className="text-xs text-gray-500 mt-1">Maximum file size: 50MB</p>
+        <p className="text-xs text-gray-500 mt-1">Maximum file size: 50MB (PDF only)</p>
       </div>
 
-      {/* File Status */}
+      {/* Error Message */}
+      {errorMessage && (
+        <div className="mt-4 p-3 bg-red-950/60 border border-red-800/80 rounded-xl flex items-start gap-2 text-red-300 text-xs">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+          <p className="flex-1">{errorMessage}</p>
+        </div>
+      )}
+
+      {/* Unauthenticated Hint */}
+      {!isSignedIn && (
+        <div className="mt-4 p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl flex items-center gap-2 text-amber-300 text-xs">
+          <ShieldAlert className="w-4 h-4 shrink-0 text-amber-400" />
+          <p>Authentication required. Please sign in to securely upload and query documents.</p>
+        </div>
+      )}
+
+      {/* File Status & Progress */}
       {pdfFile && (
-        <div className="mt-6 p-4 border rounded-xl bg-gray-700 shadow-sm">
+        <div className="mt-6 p-4 border border-gray-700 rounded-xl bg-gray-750/90 shadow-sm">
           <div className="flex items-center justify-between mb-2">
-            <div>
-              <p className="font-semibold text-sm">{pdfFile.name}</p>
-              <p className="text-xs text-gray-400">
-                {formatFileSize(pdfFile.size)}
-              </p>
+            <div className="max-w-[80%]">
+              <p className="font-semibold text-sm truncate">{pdfFile.name}</p>
+              <p className="text-xs text-gray-400">{formatFileSize(pdfFile.size)}</p>
             </div>
-            {uploadProgress === 100 ? (
+            {currentStatus === "ready" ? (
               <Check className="w-5 h-5 text-green-400" />
+            ) : currentStatus === "failed" ? (
+              <AlertCircle className="w-5 h-5 text-red-400" />
             ) : (
               <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
             )}
           </div>
-          <div className="w-full h-2 bg-gray-600 rounded-full overflow-hidden">
+
+          <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
             <div
-              className="h-full bg-indigo-400 transition-all duration-300"
+              className={`h-full transition-all duration-300 ${
+                currentStatus === "failed"
+                  ? "bg-red-500"
+                  : currentStatus === "ready"
+                  ? "bg-green-500"
+                  : "bg-indigo-400"
+              }`}
               style={{ width: `${uploadProgress}%` }}
             ></div>
           </div>
-          {uploadProgress === 100 && (
+
+          {currentStatus === "ready" && (
             <p className="text-xs text-green-400 mt-2 flex items-center gap-1">
-              <Sparkles className="w-3 h-3" />
-              Ready to answer your questions!
+              <Sparkles className="w-3.5 h-3.5" />
+              {statusMessage || "Ready to answer your questions!"}
+            </p>
+          )}
+
+          {(currentStatus === "uploading" || currentStatus === "processing") && (
+            <p className="text-xs text-indigo-300 mt-2 flex items-center gap-1.5">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {statusMessage}
             </p>
           )}
         </div>
