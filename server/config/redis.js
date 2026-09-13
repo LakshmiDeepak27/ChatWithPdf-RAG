@@ -23,6 +23,8 @@ function getRedisConfig() {
   const commonOptions = {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
+    keepAlive: 10000,
+    connectTimeout: 10000,
     retryStrategy(times) {
       const delay = Math.min(times * 200, 3000);
       return delay;

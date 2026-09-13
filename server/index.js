@@ -84,23 +84,26 @@ app.get('/health', async (req, res) => {
 
   let isHealthy = true;
 
-  // Check Redis connectivity
+  const timeoutPromise = (ms) =>
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Probe timeout')), ms));
+
+  // Check Redis connectivity (with 2.5s timeout)
   try {
-    const pingResult = await redisConnection.ping();
+    const pingResult = await Promise.race([redisConnection.ping(), timeoutPromise(2500)]);
     healthStatus.services.redis = pingResult === 'PONG' ? 'healthy' : 'degraded';
   } catch (err) {
     healthStatus.services.redis = 'unhealthy';
     isHealthy = false;
   }
 
-  // Check Qdrant connectivity
+  // Check Qdrant connectivity (with 2.5s timeout)
   try {
     const qdrant = new QdrantClient({
       url: process.env.QDRANT_URL || 'http://localhost:6333',
       apiKey: process.env.QDRANT_API_KEY || undefined,
       checkCompatibility: false,
     });
-    await qdrant.getCollections();
+    await Promise.race([qdrant.getCollections(), timeoutPromise(2500)]);
     healthStatus.services.qdrant = 'healthy';
   } catch (err) {
     healthStatus.services.qdrant = 'unhealthy';
