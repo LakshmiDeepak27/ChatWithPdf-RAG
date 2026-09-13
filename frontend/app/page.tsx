@@ -24,7 +24,7 @@ import {
 
 import FileUpload from "./components/FileUpload";
 import ChatMessage from "./components/ChatMessage";
-import Sidebar from "./components/Sidebar";
+import Sidebar, { UploadingDocInfo } from "./components/Sidebar";
 import LucidLogo from "./components/LucidLogo";
 import { ChatSession, SerializedMessage } from "./components/HistoryList";
 
@@ -54,6 +54,8 @@ export default function Home() {
   const [documentStatus, setDocumentStatus] = useState<
     "idle" | "uploading" | "processing" | "ready" | "failed"
   >("idle");
+  const [uploadingDoc, setUploadingDoc] = useState<UploadingDocInfo | null>(null);
+  const [externalPdf, setExternalPdf] = useState<File | null>(null);
   const [isTyping, setIsTyping] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -125,6 +127,8 @@ export default function Home() {
   }, [messages, isTyping]);
 
   const handleDocumentReady = (newDocId: string, file: File) => {
+    setUploadingDoc(null);
+    setExternalPdf(null);
     setDocumentId(newDocId);
     setPdfFile(file);
     setDocumentStatus("ready");
@@ -315,15 +319,30 @@ export default function Home() {
   const handleNewChat = () => {
     setDocumentId(null);
     setPdfFile(null);
+    setExternalPdf(null);
+    setUploadingDoc(null);
     setDocumentStatus("idle");
     setMessages([DEFAULT_WELCOME_MESSAGE]);
   };
 
-  const isNewChatCanvas = !documentId && documentStatus === "idle";
+  // Handle PDF file drag-and-dropped directly onto the left sidebar
+  const handleSidebarFileDrop = (file: File) => {
+    setPdfFile(file);
+    setExternalPdf(file);
+    setDocumentStatus("uploading");
+    setUploadingDoc({
+      filename: file.name,
+      status: "uploading",
+      statusMessage: "Uploading document to secure server...",
+      progress: 20,
+    });
+  };
+
+  const isNewChatCanvas = !documentId;
 
   return (
     <div className="h-screen w-screen flex font-sans bg-bg-primary text-text-primary overflow-hidden transition-colors duration-200">
-      {/* 1. ChatGPT-Style Persistent Sidebar */}
+      {/* 1. ChatGPT-Style Persistent Sidebar (Draggable Resizable + Loading State) */}
       <Sidebar
         sessions={sessions}
         activeDocumentId={documentId}
@@ -332,6 +351,8 @@ export default function Home() {
         onNewChat={handleNewChat}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        uploadingDoc={uploadingDoc}
+        onFileDrop={handleSidebarFileDrop}
       />
 
       {/* 2. Main Workspace Canvas */}
@@ -414,9 +435,34 @@ export default function Home() {
               {/* Upload Dropzone */}
               <div className="w-full">
                 <FileUpload
-                  onFileSelect={setPdfFile}
+                  externalFile={externalPdf}
+                  onFileSelect={(file) => {
+                    setPdfFile(file);
+                    setUploadingDoc({
+                      filename: file.name,
+                      status: "uploading",
+                      statusMessage: "Uploading document to secure server...",
+                      progress: 20,
+                    });
+                  }}
                   onDocumentReady={handleDocumentReady}
-                  onStatusChange={(status) => setDocumentStatus(status)}
+                  onStatusChange={(status, message, progress) => {
+                    setDocumentStatus(status);
+                    if (status === "uploading" || status === "processing") {
+                      setUploadingDoc({
+                        filename: pdfFile?.name || externalPdf?.name || "Document.pdf",
+                        status,
+                        statusMessage:
+                          message ||
+                          (status === "uploading"
+                            ? "Uploading document..."
+                            : "Indexing embeddings..."),
+                        progress: progress || (status === "uploading" ? 25 : 55),
+                      });
+                    } else {
+                      setUploadingDoc(null);
+                    }
+                  }}
                 />
               </div>
 

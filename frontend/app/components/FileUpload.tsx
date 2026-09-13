@@ -13,14 +13,17 @@ interface FileUploadProps {
   onDocumentReady?: (documentId: string, file: File) => void;
   onStatusChange?: (
     status: "idle" | "uploading" | "processing" | "ready" | "failed",
-    message?: string
+    message?: string,
+    progress?: number
   ) => void;
+  externalFile?: File | null;
 }
 
 export default function FileUpload({
   onFileSelect,
   onDocumentReady,
   onStatusChange,
+  externalFile,
 }: FileUploadProps) {
   const { getToken, isSignedIn } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
@@ -77,27 +80,31 @@ export default function FileUpload({
         if (data.status === "queued") {
           setCurrentStatus("processing");
           setUploadProgress((prev) => Math.max(prev, 25));
-          setStatusMessage(data.message || "Document queued for processing...");
-          onStatusChange?.("processing");
+          const msg = data.message || "Document queued for processing...";
+          setStatusMessage(msg);
+          onStatusChange?.("processing", msg, 25);
         } else if (data.status === "processing") {
           setCurrentStatus("processing");
           const calcProgress = Math.min(92, Math.max(35, data.progress || 45));
           setUploadProgress(calcProgress);
-          setStatusMessage(data.message || "Analyzing document and generating embeddings...");
-          onStatusChange?.("processing");
+          const msg = data.message || "Analyzing document and generating embeddings...";
+          setStatusMessage(msg);
+          onStatusChange?.("processing", msg, calcProgress);
         } else if (data.status === "ready") {
           clearPolling();
           setCurrentStatus("ready");
           setUploadProgress(100);
-          setStatusMessage(data.message || `Ready! ${data.totalChunks || 0} chunks indexed.`);
+          const msg = data.message || `Ready! ${data.totalChunks || 0} chunks indexed.`;
+          setStatusMessage(msg);
           setErrorMessage(null);
-          onStatusChange?.("ready");
+          onStatusChange?.("ready", msg, 100);
           onDocumentReady?.(documentId, file);
         } else if (data.status === "failed") {
           clearPolling();
           setCurrentStatus("failed");
-          setErrorMessage(data.error || data.message || "Document processing failed.");
-          onStatusChange?.("failed", data.error || data.message);
+          const errorMsg = data.error || data.message || "Document processing failed.";
+          setErrorMessage(errorMsg);
+          onStatusChange?.("failed", errorMsg, 0);
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -115,8 +122,9 @@ export default function FileUpload({
     setErrorMessage(null);
     setCurrentStatus("uploading");
     setUploadProgress(20);
-    setStatusMessage("Uploading document to secure server...");
-    onStatusChange?.("uploading");
+    const uploadingMsg = "Uploading document to secure server...";
+    setStatusMessage(uploadingMsg);
+    onStatusChange?.("uploading", uploadingMsg, 20);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 35000);
@@ -145,8 +153,9 @@ export default function FileUpload({
       const result = await res.json();
       setUploadProgress(35);
       setCurrentStatus("processing");
-      setStatusMessage("Document received. Processing embeddings...");
-      onStatusChange?.("processing");
+      const processingMsg = "Document received. Processing embeddings...";
+      setStatusMessage(processingMsg);
+      onStatusChange?.("processing", processingMsg, 35);
 
       pollDocumentStatus(result.documentId, file);
     } catch (err: unknown) {
@@ -160,7 +169,7 @@ export default function FileUpload({
           ? err.message
           : "Failed to upload document.";
       setErrorMessage(errorMsg);
-      onStatusChange?.("failed", errorMsg);
+      onStatusChange?.("failed", errorMsg, 0);
     }
   };
 
@@ -186,6 +195,13 @@ export default function FileUpload({
     onFileSelect(file);
     await uploadPdf(file);
   };
+
+  React.useEffect(() => {
+    if (externalFile) {
+      validateAndProcessFile(externalFile);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalFile]);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();

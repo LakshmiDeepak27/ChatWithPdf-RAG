@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import {
   Plus,
   MessageSquare,
@@ -9,6 +9,8 @@ import {
   PanelLeftClose,
   PanelLeft,
   ShieldCheck,
+  Loader2,
+  Upload,
 } from "lucide-react";
 import {
   SignedIn,
@@ -20,6 +22,13 @@ import LucidLogo from "./LucidLogo";
 import ThemeToggle from "./ThemeToggle";
 import { ChatSession } from "./HistoryList";
 
+export interface UploadingDocInfo {
+  filename: string;
+  status: "uploading" | "processing";
+  statusMessage?: string;
+  progress?: number;
+}
+
 interface SidebarProps {
   sessions: ChatSession[];
   activeDocumentId: string | null;
@@ -28,6 +37,8 @@ interface SidebarProps {
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  uploadingDoc?: UploadingDocInfo | null;
+  onFileDrop?: (file: File) => void;
 }
 
 interface GroupedSessions {
@@ -44,8 +55,99 @@ export default function Sidebar({
   onNewChat,
   isCollapsed,
   onToggleCollapse,
+  uploadingDoc,
+  onFileDrop,
 }: SidebarProps) {
-  // Chronological grouping: Today, Yesterday, Older
+  // 1. Draggable Resizable Sidebar Width
+  const [sidebarWidth, setSidebarWidth] = useState<number>(280);
+  const [isResizing, setIsResizing] = useState<boolean>(false);
+  const [isDraggingFileOver, setIsDraggingFileOver] = useState<boolean>(false);
+  const widthRef = useRef<number>(280);
+  widthRef.current = sidebarWidth;
+
+  // Load saved sidebar width
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const saved = localStorage.getItem("lucidchat_sidebar_width");
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 220 && parsed <= 520) {
+          setSidebarWidth(parsed);
+        }
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
+
+  // Drag resize handler
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const clamped = Math.min(Math.max(e.clientX, 220), 520);
+      setSidebarWidth(clamped);
+    };
+
+    const handleMouseUp = () => {
+      if (isResizing) {
+        setIsResizing(false);
+        try {
+          localStorage.setItem("lucidchat_sidebar_width", widthRef.current.toString());
+        } catch {
+          // Ignore storage errors
+        }
+      }
+    };
+
+    if (isResizing) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+    }
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+  }, [isResizing]);
+
+  // 2. Drag-and-Drop PDF directly on the Sidebar
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDraggingFileOver) setIsDraggingFileOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only unset if leaving the sidebar container
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDraggingFileOver(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFileOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      onFileDrop?.(file);
+    }
+  };
+
+  // 3. Chronological Grouping
   const grouped = useMemo(() => {
     const result: GroupedSessions = {
       today: [],
@@ -72,10 +174,17 @@ export default function Sidebar({
     return result;
   }, [sessions]);
 
-  // Collapsed Sidebar Rail
+  // ----------------------------------------------------
+  // Collapsed Sidebar Mini-Rail
+  // ----------------------------------------------------
   if (isCollapsed) {
     return (
-      <aside className="w-[64px] h-screen bg-bg-secondary border-r border-border-theme flex flex-col items-center py-4 px-2 select-none shrink-0 transition-all duration-300 z-30">
+      <aside
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className="w-[64px] h-screen bg-bg-secondary border-r border-border-theme flex flex-col items-center py-4 px-2 select-none shrink-0 transition-all duration-300 z-30 relative"
+      >
         {/* Expand Button */}
         <button
           onClick={onToggleCollapse}
@@ -89,12 +198,23 @@ export default function Sidebar({
         {/* New Chat Button */}
         <button
           onClick={onNewChat}
-          className="w-10 h-10 rounded-xl bg-surface border border-border-theme hover:border-accent-primary text-text-primary hover:text-accent-primary flex items-center justify-center transition cursor-pointer shadow-xs mb-4"
-          title="New Document Chat"
+          className="w-10 h-10 rounded-xl bg-surface border border-border-theme hover:border-accent-primary text-text-primary hover:text-accent-primary flex items-center justify-center transition cursor-pointer shadow-xs mb-3"
+          title="New Document Chat (Ctrl+K)"
           aria-label="New Document Chat"
         >
           <Plus className="w-5 h-5 text-accent-primary" />
         </button>
+
+        {/* Loading Indicator in Collapsed Rail */}
+        {uploadingDoc && (
+          <div
+            className="w-10 h-10 rounded-xl bg-surface border-2 border-accent-primary/80 text-accent-primary flex items-center justify-center relative mb-3 shadow-xs animate-pulse"
+            title={`${uploadingDoc.filename}: ${uploadingDoc.statusMessage || "Indexing..."}`}
+          >
+            <Loader2 className="w-5 h-5 animate-spin text-accent-primary" />
+            <span className="w-2.5 h-2.5 rounded-full bg-accent-primary absolute -top-1 -right-1 ring-2 ring-bg-secondary animate-ping" />
+          </div>
+        )}
 
         {/* Vertical Separator */}
         <div className="w-6 h-[1px] bg-border-theme my-2" />
@@ -134,9 +254,28 @@ export default function Sidebar({
     );
   }
 
-  // Expanded ChatGPT-style Sidebar
+  // ----------------------------------------------------
+  // Expanded ChatGPT-style Sidebar with Draggable Resize & Dropzone
+  // ----------------------------------------------------
   return (
-    <aside className="w-[280px] h-screen bg-bg-secondary border-r border-border-theme flex flex-col select-none shrink-0 transition-all duration-300 z-30">
+    <aside
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      style={{ width: `${sidebarWidth}px` }}
+      className="h-screen bg-bg-secondary border-r border-border-theme flex flex-col select-none shrink-0 relative transition-[width] duration-75 z-30"
+    >
+      {/* File Drop Overlay on the Sidebar */}
+      {isDraggingFileOver && (
+        <div className="absolute inset-0 bg-accent-soft/20 dark:bg-accent-soft/10 border-2 border-dashed border-accent-primary rounded-r-2xl z-50 flex flex-col items-center justify-center p-4 backdrop-blur-xs transition-all pointer-events-none">
+          <div className="p-3 rounded-2xl bg-surface border border-accent-primary text-accent-primary mb-2 animate-bounce">
+            <Upload className="w-6 h-6" />
+          </div>
+          <p className="text-xs font-bold text-text-primary">Drop PDF Here</p>
+          <p className="text-[11px] text-text-muted mt-0.5">Release to start instant analysis</p>
+        </div>
+      )}
+
       {/* Top Header: Logo + Collapse Button */}
       <div className="px-4 py-3.5 flex items-center justify-between border-b border-border-theme/60">
         <LucidLogo size="sm" showSubtitle={false} />
@@ -166,9 +305,47 @@ export default function Sidebar({
         </button>
       </div>
 
-      {/* Conversation Sessions List Grouped Chronologically */}
-      <div className="flex-1 overflow-y-auto px-2 py-1 space-y-4">
-        {/* Render Group */}
+      {/* Conversation Sessions List & Active Loading State */}
+      <div className="flex-1 overflow-y-auto px-2 py-1 space-y-3">
+        {/* ACTIVE LOADING CARD: When a document is uploading/processing */}
+        {uploadingDoc && (
+          <div className="p-3 rounded-xl bg-surface border-2 border-accent-primary/50 shadow-sm space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <Loader2 className="w-3.5 h-3.5 text-accent-primary animate-spin shrink-0" />
+                <span className="text-xs font-bold text-text-primary truncate">
+                  {uploadingDoc.filename}
+                </span>
+              </div>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-accent-primary text-black shrink-0 tracking-wide uppercase">
+                {uploadingDoc.status === "uploading" ? "Uploading" : "Indexing"}
+              </span>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-1.5 bg-bg-primary rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent-primary transition-all duration-300 rounded-full"
+                style={{
+                  width: `${uploadingDoc.progress || 35}%`,
+                }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-text-muted font-medium">
+              <span className="truncate mr-2">
+                {uploadingDoc.statusMessage || "Analyzing & vectorizing document..."}
+              </span>
+              {uploadingDoc.progress !== undefined && (
+                <span className="shrink-0 text-accent-primary font-mono font-bold">
+                  {uploadingDoc.progress}%
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Grouped History List */}
         {[
           { label: "Today", items: grouped.today },
           { label: "Yesterday", items: grouped.yesterday },
@@ -204,7 +381,7 @@ export default function Sidebar({
                       <span className="truncate flex-1 text-[13px]">{session.filename}</span>
                     </div>
 
-                    {/* Delete Session Button (visible on hover or active) */}
+                    {/* Delete Session Button */}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -223,13 +400,13 @@ export default function Sidebar({
           );
         })}
 
-        {/* Empty State */}
-        {sessions.length === 0 && (
+        {/* Empty State (only when not uploading and sessions empty) */}
+        {!uploadingDoc && sessions.length === 0 && (
           <div className="p-6 text-center text-text-muted space-y-2 mt-4">
             <MessageSquare className="w-6 h-6 mx-auto text-text-muted/60" />
             <p className="text-xs">No previous chats yet.</p>
             <p className="text-[11px] text-text-muted/80">
-              Upload a document to start a conversation.
+              Drag & drop or upload a PDF to start.
             </p>
           </div>
         )}
@@ -260,6 +437,21 @@ export default function Sidebar({
 
           <ThemeToggle />
         </div>
+      </div>
+
+      {/* Draggable Resizable Right Edge Handle */}
+      <div
+        onMouseDown={startResizing}
+        className={`absolute top-0 -right-1 w-2.5 h-full cursor-col-resize hover:bg-accent-primary/40 transition-colors z-40 group flex items-center justify-center ${
+          isResizing ? "bg-accent-primary/60" : "bg-transparent"
+        }`}
+        title="Drag horizontally to resize sidebar"
+      >
+        <div
+          className={`w-0.5 h-8 rounded-full transition-colors ${
+            isResizing ? "bg-accent-primary" : "bg-border-theme group-hover:bg-accent-primary"
+          }`}
+        />
       </div>
     </aside>
   );
