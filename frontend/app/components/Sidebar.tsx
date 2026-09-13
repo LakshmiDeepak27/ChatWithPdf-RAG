@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import {
   Plus,
   MessageSquare,
@@ -58,7 +58,7 @@ export default function Sidebar({
   uploadingDoc,
   onFileDrop,
 }: SidebarProps) {
-  // 1. Draggable Resizable Sidebar Width
+  // 1. Draggable Resizable Sidebar Width with Pointer Capture
   const [sidebarWidth, setSidebarWidth] = useState<number>(280);
   const [isResizing, setIsResizing] = useState<boolean>(false);
   const [isDraggingFileOver, setIsDraggingFileOver] = useState<boolean>(false);
@@ -81,45 +81,38 @@ export default function Sidebar({
     }
   }, []);
 
-  // Drag resize handler
-  const startResizing = useCallback((e: React.MouseEvent) => {
+  // Pointer capture ensures the drag NEVER drops even on fast cursor movement
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    try {
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
     setIsResizing(true);
-  }, []);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  };
 
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
-      const clamped = Math.min(Math.max(e.clientX, 220), 520);
-      setSidebarWidth(clamped);
-    };
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isResizing) return;
+    const clamped = Math.min(Math.max(e.clientX, 220), 520);
+    widthRef.current = clamped;
+    setSidebarWidth(clamped);
+  };
 
-    const handleMouseUp = () => {
-      if (isResizing) {
-        setIsResizing(false);
-        try {
-          localStorage.setItem("lucidchat_sidebar_width", widthRef.current.toString());
-        } catch {
-          // Ignore storage errors
-        }
-      }
-    };
-
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (isResizing) {
-      window.addEventListener("mousemove", handleMouseMove);
-      window.addEventListener("mouseup", handleMouseUp);
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "col-resize";
-    }
-
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
+      setIsResizing(false);
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
-    };
-  }, [isResizing]);
+      try {
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {}
+      try {
+        localStorage.setItem("lucidchat_sidebar_width", widthRef.current.toString());
+      } catch {}
+    }
+  };
 
   // 2. Drag-and-Drop PDF directly on the Sidebar
   const handleDragOver = (e: React.DragEvent) => {
@@ -262,8 +255,14 @@ export default function Sidebar({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      style={{ width: `${sidebarWidth}px` }}
-      className="h-screen bg-bg-secondary border-r border-border-theme flex flex-col select-none shrink-0 relative transition-[width] duration-75 z-30"
+      style={{
+        width: `${sidebarWidth}px`,
+        minWidth: `${sidebarWidth}px`,
+        maxWidth: `${sidebarWidth}px`,
+      }}
+      className={`h-screen bg-bg-secondary border-r border-border-theme flex flex-col select-none shrink-0 relative z-30 ${
+        isResizing ? "" : "transition-[width] duration-150"
+      }`}
     >
       {/* File Drop Overlay on the Sidebar */}
       {isDraggingFileOver && (
@@ -441,14 +440,17 @@ export default function Sidebar({
 
       {/* Draggable Resizable Right Edge Handle */}
       <div
-        onMouseDown={startResizing}
-        className={`absolute top-0 -right-1 w-2.5 h-full cursor-col-resize hover:bg-accent-primary/40 transition-colors z-40 group flex items-center justify-center ${
-          isResizing ? "bg-accent-primary/60" : "bg-transparent"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        className={`absolute top-0 -right-2 w-4 h-full cursor-col-resize hover:bg-accent-primary/20 transition-colors z-50 group flex items-center justify-center touch-none select-none ${
+          isResizing ? "bg-accent-primary/40" : "bg-transparent"
         }`}
         title="Drag horizontally to resize sidebar"
       >
         <div
-          className={`w-0.5 h-8 rounded-full transition-colors ${
+          className={`w-1 h-12 rounded-full transition-colors ${
             isResizing ? "bg-accent-primary" : "bg-border-theme group-hover:bg-accent-primary"
           }`}
         />
