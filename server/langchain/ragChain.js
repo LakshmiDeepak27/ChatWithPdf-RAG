@@ -21,10 +21,10 @@ Question:
 
 const prompt = ChatPromptTemplate.fromTemplate(systemPrompt);
 
-function getLLM() {
-  const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+function getLLM(modelNameOverride) {
+  const modelName = modelNameOverride || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
   return new ChatGoogleGenerativeAI({
-    modelName: modelName.startsWith('models/') ? modelName : `models/${modelName}`,
+    model: modelName.replace(/^models\//, ''),
     apiKey: process.env.GOOGLE_API_KEY,
     temperature: 0.2,
   });
@@ -64,22 +64,39 @@ async function askQuestion(question, userId, documentId) {
       return docs.map((doc, idx) => `[Excerpt ${idx + 1}]:\n${doc.pageContent}`).join('\n\n');
     };
 
-    const llm = getLLM();
+    // Primary model: gemini-3.6-flash; Fallback: gemini-flash-latest
+    let llm = getLLM();
 
-    const ragChain = RunnableSequence.from([
-      {
-        context: async (input) => {
-          const docs = await retriever.invoke(input.question);
-          return formatDocs(docs);
+    const createChain = (activeLlm) =>
+      RunnableSequence.from([
+        {
+          context: async (input) => {
+            const docs = await retriever.invoke(input.question);
+            return formatDocs(docs);
+          },
+          question: (input) => input.question,
         },
-        question: (input) => input.question,
-      },
-      prompt,
-      llm,
-      new StringOutputParser(),
-    ]);
+        prompt,
+        activeLlm,
+        new StringOutputParser(),
+      ]);
 
-    const answer = await ragChain.invoke({ question: question.trim() });
+    let answer;
+    try {
+      const ragChain = createChain(llm);
+      answer = await ragChain.invoke({ question: question.trim() });
+    } catch (llmErr) {
+      // Automatic failover if primary model hits deprecation/availability issues
+      if (llmErr.message && (llmErr.message.includes('404') || llmErr.message.includes('not found'))) {
+        console.warn('[RAG] Primary model error. Falling back to gemini-flash-latest...');
+        const fallbackLlm = getLLM('gemini-flash-latest');
+        const fallbackChain = createChain(fallbackLlm);
+        answer = await fallbackChain.invoke({ question: question.trim() });
+      } else {
+        throw llmErr;
+      }
+    }
+
     return answer;
   } catch (error) {
     console.error(`Error generating answer for user=${userId} doc=${documentId}:`, error.message);

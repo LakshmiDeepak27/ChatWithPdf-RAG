@@ -2,7 +2,7 @@ const express = require('express');
 const { getAuth } = require('@clerk/express');
 const rateLimit = require('express-rate-limit');
 const { askQuestion } = require('../langchain/ragChain');
-const { redisConnection } = require('../config/redis');
+const { getDocumentStatus } = require('../services/documentStatusService');
 
 const router = express.Router();
 
@@ -48,30 +48,32 @@ router.post('/', chatRateLimiter, requireAuth, async (req, res) => {
 
     const userId = req.userId;
 
-    // Verify document existence and ownership in Redis
-    const rawData = await redisConnection.get(`doc:status:${documentId}`);
-    if (rawData) {
-      const doc = JSON.parse(rawData);
+    // Verify document existence and ownership via resilient status service
+    try {
+      const doc = await getDocumentStatus(documentId);
+      if (doc) {
+        // Multi-tenant isolation: verify ownership
+        if (doc.userId && doc.userId !== userId) {
+          return res.status(403).json({ error: 'Access denied: You do not own this document.' });
+        }
 
-      // Multi-tenant isolation: check ownership
-      if (doc.userId !== userId) {
-        return res.status(403).json({ error: 'Access denied: You do not own this document.' });
-      }
+        if (doc.status === 'processing' || doc.status === 'queued') {
+          return res.status(400).json({
+            error: 'Document is still being indexed. Please wait until status is ready.',
+            status: doc.status,
+            progress: doc.progress || 0,
+          });
+        }
 
-      if (doc.status === 'processing' || doc.status === 'queued') {
-        return res.status(400).json({
-          error: 'Document is still being processed. Please wait until status is ready.',
-          status: doc.status,
-          progress: doc.progress || 0,
-        });
+        if (doc.status === 'failed') {
+          return res.status(400).json({
+            error: `Document processing failed: ${doc.error || 'Unknown error'}. Please re-upload.`,
+            status: 'failed',
+          });
+        }
       }
-
-      if (doc.status === 'failed') {
-        return res.status(400).json({
-          error: `Document processing failed: ${doc.error || 'Unknown error'}. Please re-upload.`,
-          status: 'failed',
-        });
-      }
+    } catch (statusErr) {
+      console.warn(`[Chat] Non-critical status check warning for doc ${documentId}:`, statusErr.message);
     }
 
     // Execute RAG pipeline filtered strictly by authenticated userId and documentId
@@ -84,13 +86,12 @@ router.post('/', chatRateLimiter, requireAuth, async (req, res) => {
   } catch (error) {
     console.error('[Chat] Error processing question:', error.message);
 
-    // Differentiate user-facing errors
     if (error.message && error.message.includes('rate limit')) {
       return res.status(429).json({ error: error.message });
     }
 
     return res.status(500).json({
-      error: 'Failed to generate answer from document context. Please try again.',
+      error: error.message || 'Failed to generate answer from document context. Please try again.',
     });
   }
 });
