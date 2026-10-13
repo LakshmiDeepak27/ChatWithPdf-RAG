@@ -23,7 +23,7 @@ Question:
 const prompt = ChatPromptTemplate.fromTemplate(systemPrompt);
 
 function getLLM(modelNameOverride) {
-  const modelName = modelNameOverride || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+  const modelName = modelNameOverride || process.env.GEMINI_MODEL || 'gemini-1.5-flash';
   return new ChatGoogleGenerativeAI({
     model: modelName.replace(/^models\//, ''),
     apiKey: process.env.GOOGLE_API_KEY,
@@ -146,8 +146,10 @@ async function askQuestion(question, userId, documentId) {
 
     const contextText = formatDocs(docs);
 
-    // Primary model: gemini-3.6-flash; Fallback: gemini-flash-latest
-    let llm = getLLM();
+    // Primary model invocation with resilient fallback on transient server capacity (503), high demand, 404, or rate limits
+    const primaryModel = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const fallbackModel = primaryModel === 'gemini-1.5-flash' ? 'gemini-flash-latest' : 'gemini-1.5-flash';
+    let llm = getLLM(primaryModel);
 
     const createChain = (activeLlm) =>
       RunnableSequence.from([
@@ -164,9 +166,19 @@ async function askQuestion(question, userId, documentId) {
         question: question.trim(),
       });
     } catch (llmErr) {
-      if (llmErr.message && (llmErr.message.includes('404') || llmErr.message.includes('not found'))) {
-        console.warn('[RAG] Primary model error. Falling back to gemini-flash-latest...');
-        const fallbackLlm = getLLM('gemini-flash-latest');
+      const errStr = (llmErr?.message || '').toLowerCase();
+      const isTransientOrUnavailable =
+        errStr.includes('503') ||
+        errStr.includes('high demand') ||
+        errStr.includes('service unavailable') ||
+        errStr.includes('404') ||
+        errStr.includes('not found') ||
+        errStr.includes('resource_exhausted') ||
+        errStr.includes('429');
+
+      if (isTransientOrUnavailable) {
+        console.warn(`[RAG] Primary model (${primaryModel}) error (${llmErr.message}). Falling back to ${fallbackModel}...`);
+        const fallbackLlm = getLLM(fallbackModel);
         const fallbackChain = createChain(fallbackLlm);
         answer = await fallbackChain.invoke({
           context: contextText,
