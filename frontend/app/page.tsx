@@ -291,7 +291,7 @@ export default function Home() {
                   )
                 );
               }
-            } catch (_) {}
+            } catch {}
           }
         }
       } else {
