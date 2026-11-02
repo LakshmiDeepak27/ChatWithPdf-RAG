@@ -7,25 +7,26 @@ const { RunnableSequence } = require('@langchain/core/runnables');
 const { Document } = require('@langchain/core/documents');
 const { getVectorStore, buildOwnershipFilter } = require('./vectorStore');
 
-const systemPrompt = `You are LucidChat, an elite AI document analysis assistant. Deliver a precise, beautifully structured answer using ONLY the retrieved document context below.
+const systemPrompt = `You are LucidChat, an elite AI document analysis assistant. Deliver a precise, beautifully structured answer based on the retrieved document context below.
 
-### MANDATORY FORMATTING & STRUCTURE RULES:
-1. **Direct Answer First**: Begin directly with the answer in 1–2 crisp, direct sentences. Do NOT use conversational filler like "Based on the provided document...".
-2. **Section Headings**: Use descriptive headings (\`### Section Title\`) to organize multifaceted answers.
-3. **Structured Lists**:
-   - For enumerations or projects, use a numbered list with the title and role/category on the SAME line:
-     \`1. **Project Name** — Role or Tech Stack\`
+### MANDATORY FORMATTING & ANALYSIS RULES:
+1. **Direct Answer First**: Always open with a direct, clear 1–2 sentence answer or summary.
+2. **Overview & Summary Inquiries**: If the user asks general or overview questions (e.g. "what is this PDF about?", "summarize this document", "what is this?"), synthesize the document excerpts to identify the document type, title, subject, purpose, and key highlights.
+3. **Section Headings**: Use descriptive headings (\`### Section Title\`) to organize multifaceted answers.
+4. **Structured Lists**:
+   - For enumerations, projects, or credentials, use a numbered list with the title on the SAME line:
+     \`1. **Item Title** — Role, Category, or Tech Stack\`
    - Indent details underneath each item as clean bullet points:
      \`   - **Overview:** 1-sentence summary.\`
-     \`   - **Key Details & Tech:** Specific technologies, APIs, metrics, or achievements.\`
+     \`   - **Key Details & Tech:** Specific details, metrics, or achievements.\`
    - NEVER put a number on its own line (e.g. NEVER write "1." followed by a line break).
    - Place each bullet point on its own new line.
-4. **Inline Formatting**:
+5. **Inline Formatting**:
    - Use **bold text** for crucial terms, numbers, dates, requirements, scores, or names.
    - Use inline code (\`code\`) for technical functions, commands, or APIs (e.g. \`fork()\`, \`pipe()\`, \`execvp()\`).
    - Always close bold (\`**\`) and italic (\`*\`) tags cleanly. Never leave dangling asterisks.
-5. **Clarity**: Keep paragraphs short (2 sentences max).
-6. **Strict Truthfulness**: Base your answer ONLY on the context excerpts. If the information is not in the document, politely reply: "This information is not mentioned in the uploaded document."
+6. **Clarity**: Keep paragraphs short (2 sentences max).
+7. **Strict Grounding**: Ground all answers in the provided context excerpts. If a specific factual query is absent from the document, state that it is not mentioned in the document.
 
 Context:
 {context}
@@ -77,27 +78,45 @@ async function getCachedQueryEmbedding(vectorStore, question) {
   return queryEmbedding;
 }
 
+function isOverviewQuery(question) {
+  const q = question.toLowerCase().trim();
+  return (
+    q.includes('what is this pdf') ||
+    q.includes('what is this doc') ||
+    q.includes('what is this file') ||
+    q.includes('what is this about') ||
+    q.includes('what is the pdf about') ||
+    q.includes('tell me about') ||
+    q.includes('summarize') ||
+    q.includes('summary') ||
+    q.includes('overview') ||
+    q.includes('explain this') ||
+    q.includes('who is this')
+  );
+}
+
 /**
- * Ultra-fast chunk retriever:
+ * Ultra-fast, resilient chunk retriever:
  * 1. Checks in-memory cache for precomputed query embedding.
- * 2. Queries Qdrant directly with ownership filter (limit 3 for peak token efficiency).
- * 3. Falls back gracefully to in-memory tenant isolation if filter encounters collection variance.
+ * 2. If overview query or specific query: searches Qdrant with ownership filter.
+ * 3. Falls back seamlessly to document scroll to ensure context is ALWAYS retrieved for the active document.
  */
 async function retrieveRelevantChunks(vectorStore, question, userId, documentId) {
   const filter = buildOwnershipFilter(userId, documentId);
+  const isOverview = isOverviewQuery(question);
 
-  // 1. Get query embedding with cache (0ms on repeated/similar queries)
+  // 1. Get query embedding with cache (0ms on repeated queries)
   const queryEmbedding = await getCachedQueryEmbedding(vectorStore, question);
 
   if (!queryEmbedding || queryEmbedding.length === 0) {
     throw new Error('Failed to generate search vector for question.');
   }
 
-  // 2. Direct client.search with precomputed vector and ownership filter (top 3 chunks for max speed)
+  // 2. Direct client.search with precomputed vector and ownership filter (fastest path: < 40ms)
   try {
     const searchRes = await vectorStore.client.search(vectorStore.collectionName, {
       vector: queryEmbedding,
-      limit: 3,
+      limit: 4,
       filter,
       with_payload: true,
     });
@@ -118,11 +137,35 @@ async function retrieveRelevantChunks(vectorStore, question, userId, documentId)
     console.warn('[RAG] Filtered search warning:', err1.message, err1?.data?.status?.error || '');
   }
 
-  // 3. Fallback: Search without remote filter + strict in-memory multi-tenant isolation
+  // 3. Fallback: Scroll initial chunks directly for active document (crucial for overview queries like "what is this pdf about")
+  try {
+    const scrollRes = await vectorStore.client.scroll(vectorStore.collectionName, {
+      filter,
+      limit: 4,
+      with_payload: true,
+    });
+
+    if (scrollRes && scrollRes.points && scrollRes.points.length > 0) {
+      const docs = scrollRes.points.map(
+        (point) =>
+          new Document({
+            id: String(point.id),
+            pageContent: point.payload?.content || '',
+            metadata: point.payload?.metadata || {},
+          })
+      );
+      console.log(`[RAG] Retrieved ${docs.length} chunks via document scroll fallback`);
+      return docs;
+    }
+  } catch (scrollErr) {
+    console.warn('[RAG] Filtered scroll warning:', scrollErr.message);
+  }
+
+  // 4. In-Memory Tenant Isolation Fallback: Search broader pool and isolate in memory
   try {
     const searchRes = await vectorStore.client.search(vectorStore.collectionName, {
       vector: queryEmbedding,
-      limit: 20,
+      limit: 30,
       with_payload: true,
     });
 
@@ -144,12 +187,44 @@ async function retrieveRelevantChunks(vectorStore, question, userId, documentId)
 
       if (isolatedDocs.length > 0) {
         console.log(`[RAG] Retrieved ${isolatedDocs.length} chunks via in-memory tenant isolation`);
-        return isolatedDocs.slice(0, 3);
+        return isolatedDocs.slice(0, 4);
       }
     }
   } catch (err2) {
     console.warn('[RAG] In-memory isolation search warning:', err2.message, err2?.data?.status?.error || '');
   }
+
+  // 5. Final fallback: Scroll without remote filter and match in memory
+  try {
+    const scrollRes = await vectorStore.client.scroll(vectorStore.collectionName, {
+      limit: 100,
+      with_payload: true,
+    });
+
+    if (scrollRes && scrollRes.points && scrollRes.points.length > 0) {
+      const matched = scrollRes.points
+        .filter((p) => {
+          const m = p.payload?.metadata || p.payload || {};
+          return (
+            (!documentId || String(m.documentId) === String(documentId)) &&
+            (!userId || String(m.userId) === String(userId))
+          );
+        })
+        .map(
+          (point) =>
+            new Document({
+              id: String(point.id),
+              pageContent: point.payload?.content || '',
+              metadata: point.payload?.metadata || {},
+            })
+        );
+
+      if (matched.length > 0) {
+        console.log(`[RAG] Retrieved ${matched.length} chunks via unscoped scroll + memory match`);
+        return matched.slice(0, 4);
+      }
+    }
+  } catch (_) {}
 
   return [];
 }

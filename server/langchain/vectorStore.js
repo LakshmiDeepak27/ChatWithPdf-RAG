@@ -43,6 +43,20 @@ async function getVectorStore() {
         });
         console.log(`[Qdrant] Collection "${collectionName}" created successfully.`);
       }
+
+      // Proactively ensure keyword indices exist for fast, error-free multi-tenant filtering
+      try {
+        await client.createPayloadIndex(collectionName, {
+          field_name: 'metadata.userId',
+          field_schema: 'keyword',
+        });
+      } catch (_) {}
+      try {
+        await client.createPayloadIndex(collectionName, {
+          field_name: 'metadata.documentId',
+          field_schema: 'keyword',
+        });
+      } catch (_) {}
     } catch (collErr) {
       console.warn('[Qdrant] Collection check/create warning:', collErr.message);
     }
