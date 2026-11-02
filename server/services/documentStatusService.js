@@ -17,26 +17,24 @@ async function setDocumentStatus(documentId, data) {
     updatedAt: new Date().toISOString(),
   };
 
-  // 1. Immediately update fast in-memory store
+  // 1. Immediately update fast in-memory store (< 0.1ms)
   inMemoryStatusStore.set(documentId, statusObj);
 
-  // 2. Non-blocking best-effort write to Redis with strict 2-second timeout
-  try {
+  // 2. Truly non-blocking best-effort write to Redis (only if connected)
+  if (redisConnection && redisConnection.status === 'ready') {
     const key = `${STATUS_KEY_PREFIX}${documentId}`;
-    await Promise.race([
-      redisConnection.set(key, JSON.stringify(statusObj), 'EX', STATUS_TTL_SECONDS),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Redis SET timeout (2s)')), 2000)),
-    ]);
-  } catch (err) {
-    // Redis delay or failure should never disrupt the application flow
-    console.warn(`[StatusService] Redis write for doc ${documentId} skipped (${err.message}). In-memory active.`);
+    redisConnection
+      .set(key, JSON.stringify(statusObj), 'EX', STATUS_TTL_SECONDS)
+      .catch((err) => {
+        console.warn(`[StatusService] Redis write for doc ${documentId} skipped: ${err.message}`);
+      });
   }
 
   return statusObj;
 }
 
 /**
- * Retrieves document status, checking memory first then falling back to Redis
+ * Retrieves document status, checking memory first then falling back to Redis if connected
  */
 async function getDocumentStatus(documentId) {
   if (!documentId) return null;
@@ -47,21 +45,23 @@ async function getDocumentStatus(documentId) {
     return localDoc;
   }
 
-  // 2. Fall back to Redis if not in memory (e.g. across server restarts)
-  try {
-    const key = `${STATUS_KEY_PREFIX}${documentId}`;
-    const rawData = await Promise.race([
-      redisConnection.get(key),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Redis GET timeout (2s)')), 2000)),
-    ]);
+  // 2. Fall back to Redis only if Redis connection is active
+  if (redisConnection && redisConnection.status === 'ready') {
+    try {
+      const key = `${STATUS_KEY_PREFIX}${documentId}`;
+      const rawData = await Promise.race([
+        redisConnection.get(key),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis GET timeout (400ms)')), 400)),
+      ]);
 
-    if (rawData) {
-      const parsed = JSON.parse(rawData);
-      inMemoryStatusStore.set(documentId, parsed);
-      return parsed;
+      if (rawData) {
+        const parsed = JSON.parse(rawData);
+        inMemoryStatusStore.set(documentId, parsed);
+        return parsed;
+      }
+    } catch (err) {
+      console.warn(`[StatusService] Redis read for doc ${documentId} skipped:`, err.message);
     }
-  } catch (err) {
-    console.warn(`[StatusService] Redis read for doc ${documentId} skipped:`, err.message);
   }
 
   return null;

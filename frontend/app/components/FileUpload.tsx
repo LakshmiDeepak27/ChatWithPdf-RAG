@@ -8,6 +8,23 @@ const API_BASE_URL = (
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000"
 ).replace(/\/+$/, "");
 
+function cleanErrorMessage(rawError?: string | null): string {
+  if (!rawError) return "Document processing failed. Please try again.";
+  if (
+    rawError.includes("dense vector must not be empty") ||
+    rawError.includes("Validation error in JSON body")
+  ) {
+    return "Vector indexing encountered a rate limit. Please click Retry to re-process in safe batches.";
+  }
+  if (rawError.includes("Quota exceeded") || rawError.includes("429")) {
+    return "Google Gemini embedding rate limit reached. Please wait a moment and click Retry.";
+  }
+  if (rawError.length > 200) {
+    return rawError.slice(0, 197) + "...";
+  }
+  return rawError;
+}
+
 interface FileUploadProps {
   onFileSelect: (file: File) => void;
   onDocumentReady?: (documentId: string, file: File) => void;
@@ -102,7 +119,7 @@ export default function FileUpload({
         } else if (data.status === "failed") {
           clearPolling();
           setCurrentStatus("failed");
-          const errorMsg = data.error || data.message || "Document processing failed.";
+          const errorMsg = cleanErrorMessage(data.error || data.message);
           setErrorMessage(errorMsg);
           onStatusChange?.("failed", errorMsg, 0);
         }
@@ -110,7 +127,7 @@ export default function FileUpload({
         const msg = err instanceof Error ? err.message : String(err);
         console.warn("[UploadPoll] Status check:", msg);
       }
-    }, 1500);
+    }, 800);
   };
 
   const uploadPdf = async (file: File) => {

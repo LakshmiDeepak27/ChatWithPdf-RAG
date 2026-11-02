@@ -2,7 +2,7 @@ const fs = require('fs');
 const { RecursiveCharacterTextSplitter } = require('@langchain/textsplitters');
 const { Document } = require('@langchain/core/documents');
 const { extractTextFromPDF } = require('../utils/pdfLoader');
-const { getVectorStore } = require('../langchain/vectorStore');
+const { getVectorStore, indexDocumentsInBatches } = require('../langchain/vectorStore');
 const { updateDocumentStatus } = require('./documentStatusService');
 
 /**
@@ -21,7 +21,7 @@ function cleanupTempFile(filePath) {
 
 /**
  * Robust, universal PDF processing pipeline.
- * Extracts text, chunks, computes Gemini embeddings, and indexes into Qdrant.
+ * Extracts text, chunks, computes Gemini embeddings, and indexes into Qdrant in safe batches.
  * Updates document status at each stage so frontend polling reflects real-time progress.
  */
 async function processPdf({ documentId, userId, filename, filePath, job = null }) {
@@ -64,14 +64,16 @@ async function processPdf({ documentId, userId, filename, filePath, job = null }
       try { await job.updateProgress(35); } catch (_) {}
     }
 
-    // 2. Chunk text using RecursiveCharacterTextSplitter
+    // 2. Chunk text using RecursiveCharacterTextSplitter with optimal chunk size
     console.log(`[PDFProcessor] Splitting text into chunks for "${filename}" (pages: ${numPages})...`);
     const splitter = new RecursiveCharacterTextSplitter({
-      chunkSize: 1000,
+      chunkSize: 1500,
       chunkOverlap: 200,
     });
 
-    const rawChunks = await splitter.splitText(text);
+    const rawChunks = (await splitter.splitText(text))
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
 
     if (rawChunks.length === 0) {
       throw new Error('Text chunking produced zero segments from the document.');
@@ -79,13 +81,13 @@ async function processPdf({ documentId, userId, filename, filePath, job = null }
 
     await updateDocumentStatus(documentId, {
       status: 'processing',
-      progress: 60,
+      progress: 45,
       totalChunks: rawChunks.length,
       message: `Split into ${rawChunks.length} chunks. Indexing into vector store...`,
     });
 
     if (job?.updateProgress) {
-      try { await job.updateProgress(60); } catch (_) {}
+      try { await job.updateProgress(45); } catch (_) {}
     }
 
     // 3. Prepare Documents with Strict User & Document Metadata
@@ -105,10 +107,27 @@ async function processPdf({ documentId, userId, filename, filePath, job = null }
       });
     });
 
-    // 4. Generate & Store Embeddings in Qdrant
-    console.log(`[PDFProcessor] Generating Gemini embeddings and saving into Qdrant for doc ${documentId}...`);
+    // 4. Generate & Store Embeddings in Qdrant in safe sequential batches with retry
+    console.log(`[PDFProcessor] Indexing ${documents.length} chunks into Qdrant for doc ${documentId}...`);
     const vectorStore = await getVectorStore();
-    await vectorStore.addDocuments(documents);
+
+    await indexDocumentsInBatches(vectorStore, documents, {
+      batchSize: 35,
+      onProgress: async ({ indexed, total, message }) => {
+        // Smoothly scale progress between 45% and 95%
+        const percent = Math.min(95, Math.round(45 + (indexed / total) * 50));
+        await updateDocumentStatus(documentId, {
+          status: 'processing',
+          progress: percent,
+          indexedChunks: indexed,
+          totalChunks: total,
+          message: message || `Indexed ${indexed}/${total} chunks into vector store...`,
+        });
+        if (job?.updateProgress) {
+          try { await job.updateProgress(percent); } catch (_) {}
+        }
+      },
+    });
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(`[PDFProcessor] Processing complete for doc ${documentId} in ${duration}s (${documents.length} chunks).`);
@@ -137,12 +156,20 @@ async function processPdf({ documentId, userId, filename, filePath, job = null }
   } catch (error) {
     console.error(`[PDFProcessor] Processing failed for doc ${documentId}:`, error.message);
 
+    // Provide friendly, actionable error messages
+    let friendlyError = error.message;
+    if (friendlyError.includes('dense vector must not be empty')) {
+      friendlyError = 'Vector embedding failure. Re-indexing with rate-limit recovery was attempted.';
+    } else if (friendlyError.includes('Quota exceeded') || friendlyError.includes('429')) {
+      friendlyError = 'Google Gemini embedding rate limit reached. Please wait a moment and try re-uploading.';
+    }
+
     await updateDocumentStatus(documentId, {
       status: 'failed',
       progress: 0,
-      error: error.message,
+      error: friendlyError,
       failedAt: new Date().toISOString(),
-      message: error.message,
+      message: friendlyError,
     });
 
     throw error;

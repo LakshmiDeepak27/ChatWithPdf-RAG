@@ -7,11 +7,25 @@ const { RunnableSequence } = require('@langchain/core/runnables');
 const { Document } = require('@langchain/core/documents');
 const { getVectorStore, buildOwnershipFilter } = require('./vectorStore');
 
-const systemPrompt = `You are a helpful and precise AI assistant for the TalkToPDF application.
-Use the following pieces of retrieved context from the user's uploaded PDF document to answer their question.
-If the answer cannot be determined from the context, politely state that the information is not found in the uploaded document.
-Do not hallucinate or reference documents that do not belong to the user.
-Keep your response concise, well-structured, and accurate.
+const systemPrompt = `You are LucidChat, an elite AI document analysis assistant. Deliver a precise, beautifully structured answer using ONLY the retrieved document context below.
+
+### MANDATORY FORMATTING & STRUCTURE RULES:
+1. **Direct Answer First**: Begin directly with the answer in 1–2 crisp, direct sentences. Do NOT use conversational filler like "Based on the provided document...".
+2. **Section Headings**: Use descriptive headings (\`### Section Title\`) to organize multifaceted answers.
+3. **Structured Lists**:
+   - For enumerations or projects, use a numbered list with the title and role/category on the SAME line:
+     \`1. **Project Name** — Role or Tech Stack\`
+   - Indent details underneath each item as clean bullet points:
+     \`   - **Overview:** 1-sentence summary.\`
+     \`   - **Key Details & Tech:** Specific technologies, APIs, metrics, or achievements.\`
+   - NEVER put a number on its own line (e.g. NEVER write "1." followed by a line break).
+   - Place each bullet point on its own new line.
+4. **Inline Formatting**:
+   - Use **bold text** for crucial terms, numbers, dates, requirements, scores, or names.
+   - Use inline code (\`code\`) for technical functions, commands, or APIs (e.g. \`fork()\`, \`pipe()\`, \`execvp()\`).
+   - Always close bold (\`**\`) and italic (\`*\`) tags cleanly. Never leave dangling asterisks.
+5. **Clarity**: Keep paragraphs short (2 sentences max).
+6. **Strict Truthfulness**: Base your answer ONLY on the context excerpts. If the information is not in the document, politely reply: "This information is not mentioned in the uploaded document."
 
 Context:
 {context}
@@ -23,40 +37,67 @@ Question:
 const prompt = ChatPromptTemplate.fromTemplate(systemPrompt);
 
 function getLLM(modelNameOverride) {
-  const modelName = modelNameOverride || process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+  const modelName = modelNameOverride || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   return new ChatGoogleGenerativeAI({
     model: modelName.replace(/^models\//, ''),
     apiKey: process.env.GOOGLE_API_KEY,
-    temperature: 0.2,
+    temperature: 0.1,
+    maxOutputTokens: 600,
   });
 }
 
+// In-memory LRU cache for query embeddings to eliminate redundant HTTPS embedding calls (saves ~600ms)
+const queryEmbeddingCache = new Map();
+const MAX_EMBEDDING_CACHE = 100;
+
+async function getCachedQueryEmbedding(vectorStore, question) {
+  const cacheKey = question.trim().toLowerCase();
+  if (queryEmbeddingCache.has(cacheKey)) {
+    return queryEmbeddingCache.get(cacheKey);
+  }
+
+  let queryEmbedding;
+  try {
+    queryEmbedding = await vectorStore.embeddings.embedQuery(question);
+  } catch (embErr) {
+    console.warn('[RAG] embedQuery warning, using batch fallback:', embErr.message);
+    const { embedBatchDirect } = require('./vectorStore');
+    const [vec] = await embedBatchDirect([question]);
+    queryEmbedding = vec;
+  }
+
+  if (queryEmbedding && queryEmbedding.length > 0) {
+    if (queryEmbeddingCache.size >= MAX_EMBEDDING_CACHE) {
+      const oldestKey = queryEmbeddingCache.keys().next().value;
+      queryEmbeddingCache.delete(oldestKey);
+    }
+    queryEmbeddingCache.set(cacheKey, queryEmbedding);
+  }
+
+  return queryEmbedding;
+}
+
 /**
- * Robust multi-tier chunk retriever:
- * Tier 1: LangChain similaritySearch with ownership filter
- * Tier 2: Qdrant client.search (/points/search) with filter
- * Tier 3: Qdrant client.search with strict in-memory user & document isolation
+ * Ultra-fast chunk retriever:
+ * 1. Checks in-memory cache for precomputed query embedding.
+ * 2. Queries Qdrant directly with ownership filter (limit 3 for peak token efficiency).
+ * 3. Falls back gracefully to in-memory tenant isolation if filter encounters collection variance.
  */
 async function retrieveRelevantChunks(vectorStore, question, userId, documentId) {
   const filter = buildOwnershipFilter(userId, documentId);
 
-  // Tier 1: Try standard similaritySearch with filter
-  try {
-    const docs = await vectorStore.similaritySearch(question, 5, filter);
-    if (docs && docs.length > 0) {
-      console.log(`[RAG] Retrieved ${docs.length} chunks via Tier 1 (standard filter)`);
-      return docs;
-    }
-  } catch (err1) {
-    console.warn('[RAG] Tier 1 retrieval warning:', err1.message, err1?.data?.status?.error || '');
+  // 1. Get query embedding with cache (0ms on repeated/similar queries)
+  const queryEmbedding = await getCachedQueryEmbedding(vectorStore, question);
+
+  if (!queryEmbedding || queryEmbedding.length === 0) {
+    throw new Error('Failed to generate search vector for question.');
   }
 
-  // Tier 2: Direct client.search with query vector and filter
+  // 2. Direct client.search with precomputed vector and ownership filter (top 3 chunks for max speed)
   try {
-    const queryEmbedding = await vectorStore.embeddings.embedQuery(question);
     const searchRes = await vectorStore.client.search(vectorStore.collectionName, {
       vector: queryEmbedding,
-      limit: 5,
+      limit: 3,
       filter,
       with_payload: true,
     });
@@ -70,19 +111,18 @@ async function retrieveRelevantChunks(vectorStore, question, userId, documentId)
             metadata: point.payload?.metadata || {},
           })
       );
-      console.log(`[RAG] Retrieved ${docs.length} chunks via Tier 2 (client.search with filter)`);
+      console.log(`[RAG] Retrieved ${docs.length} chunks via client.search with filter`);
       return docs;
     }
-  } catch (err2) {
-    console.warn('[RAG] Tier 2 retrieval warning:', err2.message, err2?.data?.status?.error || '');
+  } catch (err1) {
+    console.warn('[RAG] Filtered search warning:', err1.message, err1?.data?.status?.error || '');
   }
 
-  // Tier 3: Direct client.search without remote filter, enforcing strict in-memory multi-tenant isolation
+  // 3. Fallback: Search without remote filter + strict in-memory multi-tenant isolation
   try {
-    const queryEmbedding = await vectorStore.embeddings.embedQuery(question);
     const searchRes = await vectorStore.client.search(vectorStore.collectionName, {
       vector: queryEmbedding,
-      limit: 25,
+      limit: 20,
       with_payload: true,
     });
 
@@ -103,22 +143,77 @@ async function retrieveRelevantChunks(vectorStore, question, userId, documentId)
         );
 
       if (isolatedDocs.length > 0) {
-        console.log(`[RAG] Retrieved ${isolatedDocs.length} chunks via Tier 3 (in-memory isolation)`);
-        return isolatedDocs.slice(0, 5);
+        console.log(`[RAG] Retrieved ${isolatedDocs.length} chunks via in-memory tenant isolation`);
+        return isolatedDocs.slice(0, 3);
       }
     }
-  } catch (err3) {
-    console.warn('[RAG] Tier 3 retrieval warning:', err3.message, err3?.data?.status?.error || '');
+  } catch (err2) {
+    console.warn('[RAG] In-memory isolation search warning:', err2.message, err2?.data?.status?.error || '');
   }
 
   return [];
 }
 
+function formatDocs(docList) {
+  if (!docList || docList.length === 0) {
+    return 'No relevant document context found.';
+  }
+  return docList.map((doc, idx) => `[Excerpt ${idx + 1}]:\n${doc.pageContent}`).join('\n\n');
+}
+
 /**
- * Ask question with strict multi-user & document isolation
- * @param {string} question - The user query
- * @param {string} userId - Authenticated user ID from Clerk
- * @param {string} documentId - The target document ID
+ * Streaming RAG Generator: delivers tokens in real-time as they are computed.
+ */
+async function* streamQuestion(question, userId, documentId) {
+  if (!question || typeof question !== 'string') {
+    throw new Error('Question must be a non-empty string');
+  }
+  if (!userId) {
+    throw new Error('Authenticated userId is required for document retrieval');
+  }
+  if (!documentId) {
+    throw new Error('Document ID is required for chat');
+  }
+
+  const vectorStore = await getVectorStore();
+  const docs = await retrieveRelevantChunks(vectorStore, question.trim(), userId, documentId);
+  const contextText = formatDocs(docs);
+
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  const fallbackModel = primaryModel === 'gemini-3.5-flash-lite' ? 'gemini-flash-lite-latest' : 'gemini-3.5-flash-lite';
+  const llm = getLLM(primaryModel);
+
+  const createChain = (activeLlm) =>
+    RunnableSequence.from([
+      prompt,
+      activeLlm,
+      new StringOutputParser(),
+    ]);
+
+  let stream;
+  try {
+    const chain = createChain(llm);
+    stream = await chain.stream({
+      context: contextText,
+      question: question.trim(),
+    });
+  } catch (err) {
+    console.warn(`[RAG Stream] Primary model failed, falling back to ${fallbackModel}:`, err.message);
+    const fallbackLlm = getLLM(fallbackModel);
+    const fallbackChain = createChain(fallbackLlm);
+    stream = await fallbackChain.stream({
+      context: contextText,
+      question: question.trim(),
+    });
+  }
+
+  for await (const chunk of stream) {
+    yield chunk;
+  }
+}
+
+/**
+ * Ask question with strict multi-user & document isolation (buffered fallback)
  */
 async function askQuestion(question, userId, documentId) {
   if (!question || typeof question !== 'string') {
@@ -133,22 +228,11 @@ async function askQuestion(question, userId, documentId) {
 
   try {
     const vectorStore = await getVectorStore();
-
-    // Retrieve documents safely
     const docs = await retrieveRelevantChunks(vectorStore, question.trim(), userId, documentId);
-
-    const formatDocs = (docList) => {
-      if (!docList || docList.length === 0) {
-        return 'No relevant document context found.';
-      }
-      return docList.map((doc, idx) => `[Excerpt ${idx + 1}]:\n${doc.pageContent}`).join('\n\n');
-    };
-
     const contextText = formatDocs(docs);
 
-    // Primary model invocation with resilient fallback on transient server capacity (503), high demand, 404, or rate limits
-    const primaryModel = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-    const fallbackModel = primaryModel === 'gemini-1.5-flash' ? 'gemini-flash-latest' : 'gemini-1.5-flash';
+    const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+    const fallbackModel = primaryModel === 'gemini-3.5-flash-lite' ? 'gemini-flash-lite-latest' : 'gemini-3.5-flash-lite';
     let llm = getLLM(primaryModel);
 
     const createChain = (activeLlm) =>
@@ -204,5 +288,6 @@ async function askQuestion(question, userId, documentId) {
 
 module.exports = {
   askQuestion,
+  streamQuestion,
   retrieveRelevantChunks,
 };

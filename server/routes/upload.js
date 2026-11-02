@@ -131,24 +131,28 @@ router.post(
 
       await setDocumentStatus(documentId, initialStatus);
 
-      // 2. Attempt to enqueue in BullMQ queue with a 2-second timeout
+      // 2. Attempt to enqueue in BullMQ queue only if Redis is connected
       let enqueuedToBull = false;
       let job = null;
-      try {
-        job = await Promise.race([
-          uploadQueue.add(UPLOAD_QUEUE_NAME, {
-            documentId,
-            userId,
-            filename: req.file.originalname,
-            path: filePath,
-            size: req.file.size,
-          }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('BullMQ add timeout (2s)')), 2000)),
-        ]);
-        enqueuedToBull = true;
-        console.log(`[Upload] Document ${documentId} enqueued in BullMQ job ${job.id} for user ${userId}`);
-      } catch (queueErr) {
-        console.warn(`[Upload] BullMQ queue unavailable (${queueErr.message}). Initiating direct background processor.`);
+      const { redisConnection } = require('../config/redis');
+
+      if (redisConnection && redisConnection.status === 'ready') {
+        try {
+          job = await Promise.race([
+            uploadQueue.add(UPLOAD_QUEUE_NAME, {
+              documentId,
+              userId,
+              filename: req.file.originalname,
+              path: filePath,
+              size: req.file.size,
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('BullMQ add timeout (800ms)')), 800)),
+          ]);
+          enqueuedToBull = true;
+          console.log(`[Upload] Document ${documentId} enqueued in BullMQ job ${job.id} for user ${userId}`);
+        } catch (queueErr) {
+          console.warn(`[Upload] BullMQ queue unavailable (${queueErr.message}). Initiating direct background processor.`);
+        }
       }
 
       // 3. Fallback: If BullMQ/Redis is unavailable, process asynchronously in background

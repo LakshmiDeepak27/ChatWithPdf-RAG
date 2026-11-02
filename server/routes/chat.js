@@ -1,7 +1,7 @@
 const express = require('express');
 const { getAuth } = require('@clerk/express');
 const rateLimit = require('express-rate-limit');
-const { askQuestion } = require('../langchain/ragChain');
+const { askQuestion, streamQuestion } = require('../langchain/ragChain');
 const { getDocumentStatus } = require('../services/documentStatusService');
 
 const router = express.Router();
@@ -76,7 +76,34 @@ router.post('/', chatRateLimiter, requireAuth, async (req, res) => {
       console.warn(`[Chat] Non-critical status check warning for doc ${documentId}:`, statusErr.message);
     }
 
-    // Execute RAG pipeline filtered strictly by authenticated userId and documentId
+    const wantsStream = req.body.stream === true || (req.headers.accept && req.headers.accept.includes('text/event-stream'));
+
+    if (wantsStream) {
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      if (typeof res.flushHeaders === 'function') {
+        res.flushHeaders();
+      }
+
+      try {
+        const stream = streamQuestion(question.trim(), userId, documentId);
+        for await (const chunk of stream) {
+          if (chunk) {
+            res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+          }
+        }
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      } catch (streamErr) {
+        console.error('[Chat:Stream] Error during token streaming:', streamErr.message);
+        res.write(`data: ${JSON.stringify({ error: streamErr.message })}\n\n`);
+        return res.end();
+      }
+    }
+
+    // Execute standard buffered RAG pipeline if streaming not requested
     const answer = await askQuestion(question.trim(), userId, documentId);
 
     return res.json({

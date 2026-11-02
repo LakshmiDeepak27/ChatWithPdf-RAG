@@ -229,30 +229,95 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
+          Accept: "text/event-stream, application/json",
         },
         body: JSON.stringify({
           question: currentQuestion,
           documentId: documentId,
+          stream: true,
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || `Server responded with status ${response.status}`);
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server responded with status ${response.status}`);
       }
 
-      const botResponse = {
-        id: (Date.now() + 1).toString(),
+      const contentType = response.headers.get("content-type") || "";
+      let answerText = "";
+      const botMsgId = (Date.now() + 1).toString();
+
+      if (contentType.includes("text/event-stream") && response.body) {
+        // Real-time token streaming: remove typing dots and stream text directly to UI
+        setIsTyping(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: botMsgId,
+            sender: "bot" as const,
+            text: "",
+            timestamp: new Date(),
+          },
+        ]);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (!trimmedLine || !trimmedLine.startsWith("data: ")) continue;
+            const dataStr = trimmedLine.slice(6).trim();
+            if (dataStr === "[DONE]") break;
+
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.error) {
+                throw new Error(parsed.error);
+              }
+              if (parsed.chunk) {
+                answerText += parsed.chunk;
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === botMsgId ? { ...m, text: answerText } : m
+                  )
+                );
+              }
+            } catch (_) {}
+          }
+        }
+      } else {
+        // Buffered JSON fallback
+        const data = await response.json();
+        answerText = data.answer || "No response received from the RAG assistant.";
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: botMsgId,
+            sender: "bot" as const,
+            text: answerText,
+            timestamp: new Date(),
+          },
+        ]);
+      }
+
+      // Persist completed conversation to History session
+      const finalBotMsg = {
+        id: botMsgId,
         sender: "bot" as const,
-        text: data.answer || "No response received from the RAG assistant.",
+        text: answerText || "No response received from the RAG assistant.",
         timestamp: new Date(),
       };
+      const finalMessages = [...updatedWithUser, finalBotMsg];
 
-      const finalMessages = [...updatedWithUser, botResponse];
-      setMessages(finalMessages);
-
-      // Persist updated conversation to History session
       const serializedMsgs: SerializedMessage[] = finalMessages.map((m) => ({
         id: m.id,
         sender: m.sender,

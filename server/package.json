@@ -8,6 +8,7 @@
     "server": "node index.js",
     "worker": "node workers/pdfWorker.js",
     "start:free": "node start-free.js",
+    "clear:db": "node clear-qdrant.js",
     "dev": "nodemon index.js"
   },
   "author": "",
