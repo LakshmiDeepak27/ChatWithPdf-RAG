@@ -90,7 +90,7 @@ app.get('/', (req, res) => {
   return res.json({
     service: 'TalkToPdf Production API',
     status: 'online',
-    version: '1.0.0',
+    version: '1.0.1',
     documentation: 'See README.md for endpoint specifications',
   });
 });
